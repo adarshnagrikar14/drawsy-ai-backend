@@ -21,7 +21,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1078.0",
     "cors": "2.8.5",
+    "dotenv": "17.2.3",
     "express": "5.2.1",
     "firebase-admin": "14.1.0",
     "helmet": "8.1.0",
