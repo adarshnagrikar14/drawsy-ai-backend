@@ -1,29 +1,10 @@
-import {
-  applicationDefault,
-  getApp,
-  getApps,
-  initializeApp,
-} from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 
 import type { App } from "firebase-admin/app";
 import type { AuthenticatedUser, TokenVerifier } from "./types.js";
 
-const getFirebaseApp = (projectId: string): App => {
-  if (getApps().length > 0) {
-    return getApp();
-  }
-
-  return initializeApp({
-    credential: applicationDefault(),
-    projectId,
-  });
-};
-
-export const createFirebaseTokenVerifier = (
-  projectId: string,
-): TokenVerifier => {
-  const auth = getAuth(getFirebaseApp(projectId));
+export const createFirebaseTokenVerifier = (app: App): TokenVerifier => {
+  const auth = getAuth(app);
 
   const getOptionalStringClaim = (
     claims: Record<string, unknown>,

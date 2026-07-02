@@ -1,11 +1,19 @@
+import "dotenv/config";
+
 import { createApp } from "./app.js";
 import { createFirebaseTokenVerifier } from "./auth/firebaseTokenVerifier.js";
 import { loadConfig } from "./config.js";
+import { getFirebaseAdminApp } from "./firebase.js";
+import { FirestoreWorkspaceService } from "./workspace/firestoreWorkspaceService.js";
+import { R2SceneStorage } from "./workspace/r2SceneStorage.js";
 
 const config = loadConfig();
+const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
+const sceneStorage = new R2SceneStorage(config);
 const app = createApp({
   config,
-  tokenVerifier: createFirebaseTokenVerifier(config.firebaseProjectId),
+  tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
+  workspaceService: new FirestoreWorkspaceService(firebaseApp, sceneStorage),
 });
 
 const server = app.listen(config.port, config.host, () => {
