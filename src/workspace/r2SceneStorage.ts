@@ -6,12 +6,15 @@ import {
   S3Client,
   S3ServiceException,
 } from "@aws-sdk/client-s3";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import { ApiError } from "../http/apiError.js";
+import { serializeScene } from "./sceneCodec.js";
 
 import type { AppConfig } from "../config.js";
 
-const ENVELOPE_VERSION = 1;
+const LEGACY_ENVELOPE_VERSION = 1;
+const ENVELOPE_VERSION = 2;
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 
@@ -19,7 +22,7 @@ export const encryptScene = (scene: unknown, key: Buffer) => {
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(scene), "utf8"),
+    cipher.update(gzipSync(serializeScene(scene))),
     cipher.final(),
   ]);
   return Buffer.concat([
@@ -34,7 +37,8 @@ export const decryptScene = (envelope: Buffer, key: Buffer): unknown => {
   const minimumLength = 1 + IV_BYTES + AUTH_TAG_BYTES;
   if (
     envelope.byteLength <= minimumLength ||
-    envelope[0] !== ENVELOPE_VERSION
+    (envelope[0] !== LEGACY_ENVELOPE_VERSION &&
+      envelope[0] !== ENVELOPE_VERSION)
   ) {
     throw new ApiError(
       502,
@@ -55,7 +59,9 @@ export const decryptScene = (envelope: Buffer, key: Buffer): unknown => {
     decipher.update(envelope.subarray(ciphertextStart)),
     decipher.final(),
   ]);
-  return JSON.parse(plaintext.toString("utf8")) as unknown;
+  const serialized =
+    envelope[0] === ENVELOPE_VERSION ? gunzipSync(plaintext) : plaintext;
+  return JSON.parse(serialized.toString("utf8")) as unknown;
 };
 
 export interface SceneStorage {
