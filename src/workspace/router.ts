@@ -4,6 +4,7 @@ import { ApiError } from "../http/apiError.js";
 import {
   deleteVersionSchema,
   idSchema,
+  patchCanvasSchema,
   putCanvasSchema,
   putProjectSchema,
 } from "./schemas.js";
@@ -84,6 +85,16 @@ export const createWorkspaceRouter = (
     assertPathId(request.params.canvasId, input.id);
     const canvas = await workspaceService.putCanvas(getUserId(response), input);
     response.status(input.baseVersion === 0 ? 201 : 200).json({ canvas });
+  });
+
+  router.patch("/canvases/:canvasId", async (request, response) => {
+    const input = patchCanvasSchema.parse(request.body);
+    assertPathId(request.params.canvasId, input.id);
+    const canvas = await workspaceService.patchCanvas(
+      getUserId(response),
+      input,
+    );
+    response.json({ canvas });
   });
 
   router.delete("/canvases/:canvasId", async (request, response) => {

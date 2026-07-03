@@ -33,7 +33,19 @@ const workspaceService: WorkspaceService = {
     Promise.resolve({ ...project, version: baseVersion + 1 }),
   deleteProject: () => Promise.resolve({ deletedCanvasIds: [] }),
   putCanvas: (_userId, { baseVersion, scene: _scene, ...canvas }) =>
-    Promise.resolve({ ...canvas, version: baseVersion + 1 }),
+    Promise.resolve({
+      ...canvas,
+      version: baseVersion + 1,
+      contentHash: "a".repeat(64),
+    }),
+  patchCanvas: (_userId, { baseVersion, ...canvas }) =>
+    Promise.resolve({
+      ...canvas,
+      version: baseVersion + 1,
+      createdAt: 1,
+      updatedAt: 1,
+      contentHash: "a".repeat(64),
+    }),
   deleteCanvas: () => Promise.resolve(),
 };
 
@@ -238,6 +250,37 @@ describe("Drawsy backend API", () => {
       },
     });
     expect(putCanvas).toHaveBeenCalledWith("user-1", payload);
+  });
+
+  it("updates canvas metadata without requiring scene content", async () => {
+    const { verifier } = createVerifier();
+    const patchCanvas = vi.fn<WorkspaceService["patchCanvas"]>(
+      (...arguments_) => workspaceService.patchCanvas(...arguments_),
+    );
+    const service = { ...workspaceService, patchCanvas };
+    const payload = {
+      id: "canvas-01",
+      title: "Architecture",
+      projectId: null,
+      baseVersion: 1,
+      lastOpenedAt: 3,
+    };
+
+    const response = await request(
+      createApp({ config, tokenVerifier: verifier, workspaceService: service }),
+    )
+      .patch("/v1/canvases/canvas-01")
+      .set("authorization", "Bearer valid-token")
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    const body = response.body as { canvas: Record<string, unknown> };
+    expect(body.canvas).toMatchObject({
+      id: "canvas-01",
+      version: 2,
+      contentHash: "a".repeat(64),
+    });
+    expect(patchCanvas).toHaveBeenCalledWith("user-1", payload);
   });
 
   it("returns a stable conflict when a remote version changed", async () => {

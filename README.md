@@ -13,6 +13,7 @@ the Excalidraw editor core.
 - `PUT /v1/projects/:id` - creates or updates a versioned project
 - `DELETE /v1/projects/:id?baseVersion=N` - deletes a project and its canvases
 - `PUT /v1/canvases/:id` - creates or updates a versioned canvas and R2 scene
+- `PATCH /v1/canvases/:id` - updates canvas metadata without rewriting its scene
 - `DELETE /v1/canvases/:id?baseVersion=N` - deletes a canvas
 
 Protected requests use:
@@ -26,8 +27,9 @@ user ID supplied by the client as proof of identity.
 
 Project and canvas metadata is stored below the authenticated user's Firestore
 path. Full scenes are stored under user-scoped R2 object keys in authenticated
-AES-256-GCM envelopes. Updates use a required `baseVersion`; stale writes return
-`409 version_conflict` instead of overwriting another device.
+compressed AES-256-GCM envelopes. Canonical scene hashes make retrying an
+identical checkpoint idempotent. Updates use a required `baseVersion`; stale
+writes return `409 version_conflict` instead of overwriting another device.
 
 Back up `WORKSPACE_ENCRYPTION_KEY` in the deployment secret manager. Losing it
 makes existing workspace scenes unrecoverable.
