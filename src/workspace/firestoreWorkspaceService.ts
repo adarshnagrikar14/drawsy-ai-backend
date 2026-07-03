@@ -1,10 +1,12 @@
 import { getFirestore } from "firebase-admin/firestore";
 
 import { ApiError } from "../http/apiError.js";
+import { hashScene } from "./sceneCodec.js";
 
 import type { App } from "firebase-admin/app";
 import type {
   PutCanvasInput,
+  PatchCanvasInput,
   PutProjectInput,
   StoredCanvas,
   WorkspaceProject,
@@ -52,6 +54,7 @@ const toStoredCanvas = (
     createdAt: Number(data.createdAt),
     updatedAt: Number(data.updatedAt),
     lastOpenedAt: Number(data.lastOpenedAt),
+    contentHash: typeof data.contentHash === "string" ? data.contentHash : null,
     sceneObjectKey: String(data.sceneObjectKey),
   };
 };
@@ -106,7 +109,6 @@ export class FirestoreWorkspaceService implements WorkspaceService {
     const [projects, canvases] = await Promise.all([
       userRef.collection("projects").get(),
       userRef.collection("canvases").get(),
-      userRef.set({ lastSeenAt: Date.now() }, { merge: true }),
     ]);
 
     return {
@@ -127,8 +129,17 @@ export class FirestoreWorkspaceService implements WorkspaceService {
     const reference = this.projectRef(userId, input.id);
     return this.firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
-      assertVersion(snapshot, input.baseVersion, "project");
       const now = Date.now();
+      if (snapshot.exists) {
+        const current = toProject(snapshot);
+        const isSameOrOlder =
+          current.title === input.title &&
+          current.lastOpenedAt >= clampTimestamp(input.lastOpenedAt, now);
+        if (isSameOrOlder) {
+          return current;
+        }
+      }
+      assertVersion(snapshot, input.baseVersion, "project");
       const project: WorkspaceProject = {
         id: input.id,
         title: input.title,
@@ -180,14 +191,33 @@ export class FirestoreWorkspaceService implements WorkspaceService {
   async putCanvas(userId: string, input: PutCanvasInput) {
     const canvasReference = this.canvasRef(userId, input.id);
     const existingSnapshot = await canvasReference.get();
+    const contentHash = hashScene(input.scene);
+    const existingCanvas = existingSnapshot.exists
+      ? toStoredCanvas(existingSnapshot)
+      : null;
+    if (
+      existingCanvas?.contentHash === contentHash &&
+      existingCanvas.title === input.title &&
+      existingCanvas.projectId === input.projectId &&
+      existingCanvas.lastOpenedAt >= input.lastOpenedAt
+    ) {
+      return toMetadata(existingCanvas);
+    }
     assertVersion(existingSnapshot, input.baseVersion, "canvas");
+    if (existingCanvas?.contentHash === contentHash) {
+      return this.patchCanvas(userId, {
+        id: input.id,
+        title: input.title,
+        projectId: input.projectId,
+        baseVersion: input.baseVersion,
+        lastOpenedAt: input.lastOpenedAt,
+      });
+    }
     if (input.projectId) {
       await this.assertProjectExists(userId, input.projectId);
     }
 
-    const previousObjectKey = existingSnapshot.exists
-      ? toStoredCanvas(existingSnapshot).sceneObjectKey
-      : null;
+    const previousObjectKey = existingCanvas?.sceneObjectKey || null;
     const objectKey = this.sceneStorage.createObjectKey(userId, input.id);
     await this.sceneStorage.put(objectKey, input.scene);
 
@@ -219,6 +249,7 @@ export class FirestoreWorkspaceService implements WorkspaceService {
               : clampTimestamp(input.createdAt, now),
             updatedAt: now,
             lastOpenedAt: clampTimestamp(input.lastOpenedAt, now),
+            contentHash,
             sceneObjectKey: objectKey,
           };
           transaction.set(canvasReference, storedCanvas);
@@ -243,6 +274,55 @@ export class FirestoreWorkspaceService implements WorkspaceService {
       await this.sceneStorage.delete(objectKey).catch(() => undefined);
       throw error;
     }
+  }
+
+  async patchCanvas(userId: string, input: PatchCanvasInput) {
+    const canvasReference = this.canvasRef(userId, input.id);
+    return this.firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(canvasReference);
+      if (!snapshot.exists) {
+        throw new ApiError(
+          404,
+          "canvas_not_found",
+          "The canvas was not found.",
+        );
+      }
+      const current = toStoredCanvas(snapshot);
+      if (input.projectId && input.projectId !== current.projectId) {
+        const project = await transaction.get(
+          this.projectRef(userId, input.projectId),
+        );
+        if (!project.exists) {
+          throw new ApiError(
+            404,
+            "project_not_found",
+            "The project was not found.",
+          );
+        }
+      }
+      const now = Date.now();
+      const lastOpenedAt = clampTimestamp(input.lastOpenedAt, now);
+      const metadataMatches =
+        current.title === input.title && current.projectId === input.projectId;
+
+      if (current.version !== input.baseVersion && !metadataMatches) {
+        assertVersion(snapshot, input.baseVersion, "canvas");
+      }
+      if (metadataMatches && current.lastOpenedAt >= lastOpenedAt) {
+        return toMetadata(current);
+      }
+
+      const next: StoredCanvas = {
+        ...current,
+        title: input.title,
+        projectId: input.projectId,
+        version: current.version + 1,
+        updatedAt: now,
+        lastOpenedAt: Math.max(current.lastOpenedAt, lastOpenedAt),
+      };
+      transaction.set(canvasReference, next);
+      return toMetadata(next);
+    });
   }
 
   async deleteCanvas(userId: string, canvasId: string, baseVersion: number) {

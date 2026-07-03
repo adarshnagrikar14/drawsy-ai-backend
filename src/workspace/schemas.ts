@@ -31,6 +31,14 @@ export const putCanvasSchema = z.object({
   scene: z.record(z.string(), z.unknown()),
 });
 
+export const patchCanvasSchema = z.object({
+  id: idSchema,
+  title: titleSchema,
+  projectId: idSchema.nullable(),
+  baseVersion: baseVersionSchema,
+  lastOpenedAt: timestampSchema,
+});
+
 export const deleteVersionSchema = z.object({
   baseVersion: z.coerce.number().int().positive(),
 });

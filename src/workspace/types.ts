@@ -15,6 +15,7 @@ export type CanvasMetadata = {
   createdAt: number;
   updatedAt: number;
   lastOpenedAt: number;
+  contentHash: string | null;
 };
 
 export type StoredCanvas = CanvasMetadata & {
@@ -30,9 +31,16 @@ export type PutProjectInput = Omit<WorkspaceProject, "version"> & {
   baseVersion: number;
 };
 
-export type PutCanvasInput = Omit<CanvasMetadata, "version"> & {
+export type PutCanvasInput = Omit<CanvasMetadata, "version" | "contentHash"> & {
   baseVersion: number;
   scene: unknown;
+};
+
+export type PatchCanvasInput = Pick<
+  CanvasMetadata,
+  "id" | "title" | "projectId" | "lastOpenedAt"
+> & {
+  baseVersion: number;
 };
 
 export interface WorkspaceService {
@@ -45,6 +53,7 @@ export interface WorkspaceService {
     baseVersion: number,
   ): Promise<{ deletedCanvasIds: string[] }>;
   putCanvas(userId: string, input: PutCanvasInput): Promise<CanvasMetadata>;
+  patchCanvas(userId: string, input: PatchCanvasInput): Promise<CanvasMetadata>;
   deleteCanvas(
     userId: string,
     canvasId: string,
