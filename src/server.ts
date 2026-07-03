@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { createApp } from "./app.js";
 import { createFirebaseTokenVerifier } from "./auth/firebaseTokenVerifier.js";
+import { FirestoreCommentService } from "./comments/firestoreCommentService.js";
 import { loadConfig } from "./config.js";
 import { getFirebaseAdminApp } from "./firebase.js";
 import { FirestoreWorkspaceService } from "./workspace/firestoreWorkspaceService.js";
@@ -14,6 +15,7 @@ const app = createApp({
   config,
   tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
   workspaceService: new FirestoreWorkspaceService(firebaseApp, sceneStorage),
+  commentService: new FirestoreCommentService(firebaseApp),
 });
 
 const server = app.listen(config.port, config.host, () => {

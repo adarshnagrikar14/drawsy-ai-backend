@@ -10,6 +10,7 @@ import {
 } from "./schemas.js";
 
 import type { createAuthenticate } from "../http/authenticate.js";
+import type { CommentService } from "../comments/types.js";
 import type { WorkspaceService } from "./types.js";
 import type { Response } from "express";
 
@@ -40,9 +41,35 @@ const assertPathId = (pathId: string | undefined, bodyId: string) => {
 export const createWorkspaceRouter = (
   authenticate: ReturnType<typeof createAuthenticate>,
   workspaceService: WorkspaceService,
+  commentService?: CommentService,
 ) => {
   const router = Router();
   router.use(authenticate);
+  const removeDeletedCanvasComments = async (
+    userId: string,
+    canvasIds: string[],
+  ) => {
+    if (!commentService || canvasIds.length === 0) {
+      return;
+    }
+    const results = await Promise.allSettled(
+      canvasIds.map((canvasId) =>
+        commentService.deleteAllForCanvas(userId, canvasId),
+      ),
+    );
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            message: "comment_cleanup_failed",
+            userId,
+            canvasId: canvasIds[index],
+          }),
+        );
+      }
+    });
+  };
 
   router.get("/workspace", async (_request, response) => {
     response.json(await workspaceService.getWorkspace(getUserId(response)));
@@ -71,13 +98,14 @@ export const createWorkspaceRouter = (
   router.delete("/projects/:projectId", async (request, response) => {
     const projectId = idSchema.parse(request.params.projectId);
     const { baseVersion } = deleteVersionSchema.parse(request.query);
-    response.json(
-      await workspaceService.deleteProject(
-        getUserId(response),
-        projectId,
-        baseVersion,
-      ),
+    const userId = getUserId(response);
+    const result = await workspaceService.deleteProject(
+      userId,
+      projectId,
+      baseVersion,
     );
+    await removeDeletedCanvasComments(userId, result.deletedCanvasIds);
+    response.json(result);
   });
 
   router.put("/canvases/:canvasId", async (request, response) => {
@@ -100,11 +128,9 @@ export const createWorkspaceRouter = (
   router.delete("/canvases/:canvasId", async (request, response) => {
     const canvasId = idSchema.parse(request.params.canvasId);
     const { baseVersion } = deleteVersionSchema.parse(request.query);
-    await workspaceService.deleteCanvas(
-      getUserId(response),
-      canvasId,
-      baseVersion,
-    );
+    const userId = getUserId(response);
+    await workspaceService.deleteCanvas(userId, canvasId, baseVersion);
+    await removeDeletedCanvasComments(userId, [canvasId]);
     response.status(204).send();
   });
 

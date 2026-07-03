@@ -15,6 +15,9 @@ the Excalidraw editor core.
 - `PUT /v1/canvases/:id` - creates or updates a versioned canvas and R2 scene
 - `PATCH /v1/canvases/:id` - updates canvas metadata without rewriting its scene
 - `DELETE /v1/canvases/:id?baseVersion=N` - deletes a canvas
+- `GET /v1/canvases/:id/comments` - lists the owner's private comments
+- `POST /v1/canvases/:id/comments` - creates a private comment
+- `DELETE /v1/canvases/:id/comments/:commentId?baseVersion=N` - deletes a comment
 
 Protected requests use:
 
@@ -30,6 +33,10 @@ path. Full scenes are stored under user-scoped R2 object keys in authenticated
 compressed AES-256-GCM envelopes. Canonical scene hashes make retrying an
 identical checkpoint idempotent. Updates use a required `baseVersion`; stale
 writes return `409 version_conflict` instead of overwriting another device.
+
+Comments live below the authenticated user's canvas in Firestore. They are not
+stored in scene JSON, R2 scene objects, shared links, collaboration payloads, or
+exports. Removing a canvas also removes its comments.
 
 Back up `WORKSPACE_ENCRYPTION_KEY` in the deployment secret manager. Losing it
 makes existing workspace scenes unrecoverable.

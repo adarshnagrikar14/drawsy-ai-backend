@@ -7,10 +7,12 @@ import { ZodError } from "zod";
 
 import { createAuthenticate } from "./http/authenticate.js";
 import { ApiError } from "./http/apiError.js";
+import { createCommentsRouter } from "./comments/router.js";
 import { createWorkspaceRouter } from "./workspace/router.js";
 
 import type { AppConfig } from "./config.js";
 import type { TokenVerifier } from "./auth/types.js";
+import type { CommentService } from "./comments/types.js";
 import type { WorkspaceService } from "./workspace/types.js";
 import type { NextFunction, Request, Response } from "express";
 
@@ -18,12 +20,14 @@ type AppDependencies = {
   config: AppConfig;
   tokenVerifier: TokenVerifier;
   workspaceService: WorkspaceService;
+  commentService?: CommentService;
 };
 
 export const createApp = ({
   config,
   tokenVerifier,
   workspaceService,
+  commentService,
 }: AppDependencies) => {
   const app = express();
   const authenticate = createAuthenticate(tokenVerifier);
@@ -60,7 +64,16 @@ export const createApp = ({
     response.status(200).json({ user });
   });
 
-  app.use("/v1", createWorkspaceRouter(authenticate, workspaceService));
+  app.use(
+    "/v1",
+    createWorkspaceRouter(authenticate, workspaceService, commentService),
+  );
+  if (commentService) {
+    app.use(
+      "/v1/canvases/:canvasId/comments",
+      createCommentsRouter(authenticate, commentService),
+    );
+  }
 
   app.use((_request, response) => {
     response.status(404).json({
