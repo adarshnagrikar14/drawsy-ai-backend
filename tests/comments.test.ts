@@ -24,6 +24,17 @@ const config: AppConfig = {
     secretAccessKey: "test",
     encryptionKey: Buffer.alloc(32, 1),
   },
+  kanban: {
+    encryptionKey: Buffer.alloc(32, 2),
+    encryptionKeys: new Map([[1, Buffer.alloc(32, 2)]]),
+    encryptionKeyVersion: 1,
+    emailDigestKey: Buffer.alloc(32, 3),
+    sseHeartbeatMs: 45_000,
+    eventRetentionMs: 30 * 24 * 60 * 60 * 1000,
+    operationRetentionMs: 30 * 24 * 60 * 60 * 1000,
+    invitesPerHour: 20,
+    recentAuthMs: 300_000,
+  },
 };
 
 const workspaceService: WorkspaceService = {
