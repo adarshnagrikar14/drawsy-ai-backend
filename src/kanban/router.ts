@@ -57,6 +57,11 @@ export const createKanbanRouter = (
     };
   };
 
+  router.use((_request, response, next) => {
+    response.setHeader("Cache-Control", "no-store");
+    next();
+  });
+
   router.post("/kanban/invitations/inspect", async (request, response) => {
     const { token } = invitationTokenSchema.parse(request.body);
     response.json(await service.inspectInvitation(token));

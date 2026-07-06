@@ -118,17 +118,29 @@ class FakeReference {
 }
 
 class FakeTransaction {
+  private hasWritten = false;
+  private readonly prefetchedPaths = new Set<string>();
+
   constructor(private readonly firestore: FakeFirestore) {}
 
   get(reference: FakeReference | FakeQuery) {
+    if (reference instanceof FakeReference) {
+      if (this.hasWritten && !this.prefetchedPaths.has(reference.path)) {
+        throw new Error(`Read after write without prefetch: ${reference.path}`);
+      }
+    } else if (this.hasWritten) {
+      throw new Error("Query after write without prefetch");
+    }
     return reference.get();
   }
 
   getAll(...references: FakeReference[]) {
+    references.forEach((reference) => this.prefetchedPaths.add(reference.path));
     return this.firestore.getAll(...references);
   }
 
   create(reference: FakeReference, value: RecordValue) {
+    this.hasWritten = true;
     if (this.firestore.values.has(reference.path)) {
       throw new Error(`Document already exists: ${reference.path}`);
     }
@@ -136,10 +148,12 @@ class FakeTransaction {
   }
 
   set(reference: FakeReference, value: RecordValue) {
+    this.hasWritten = true;
     this.firestore.values.set(reference.path, value);
   }
 
   update(reference: FakeReference, value: RecordValue) {
+    this.hasWritten = true;
     const current = this.firestore.values.get(reference.path);
     if (!current) {
       throw new Error(`Missing document: ${reference.path}`);
@@ -148,6 +162,7 @@ class FakeTransaction {
   }
 
   delete(reference: FakeReference) {
+    this.hasWritten = true;
     this.firestore.values.delete(reference.path);
   }
 }
@@ -279,6 +294,73 @@ describe("FirestoreKanbanService", () => {
     });
   });
 
+  it("prefetches linked canvas documents before mixed command batches write", async () => {
+    const firestore = new FakeFirestore();
+    getFirestore.mockReturnValue(firestore);
+    const service = new FirestoreKanbanService(
+      {} as never,
+      new KanbanCrypto(Buffer.alloc(32, 7)),
+      { eventMs: 1000, operationMs: 1000, invitesPerHour: 10 },
+    );
+    await service.createBoard("user-0001", {
+      id: "board-0001",
+      title: "Roadmap",
+      initialColumnId: "column-0001",
+      initialColumnTitle: "Not started",
+    });
+    firestore.values.set("users/user-0001/canvases/canvas-0001", {
+      title: "Launch flow",
+    });
+    await service.applyCommands("user-0001", "board-0001", "client-0001", [
+      {
+        ...commandBase,
+        operationId: "operation-card",
+        type: "createCard",
+        entityId: "card-0001",
+        payload: {
+          title: "Task",
+          description: "",
+          priority: null,
+          progress: 0,
+          dueDate: null,
+          legacyAssigneeText: null,
+          legacyCanvasTags: [],
+          columnId: "column-0001",
+          assigneeIds: [],
+          beforeId: null,
+          afterId: null,
+        },
+      },
+    ]);
+
+    const result = await service.applyCommands(
+      "user-0001",
+      "board-0001",
+      "client-0001",
+      [
+        {
+          ...commandBase,
+          operationId: "operation-update-card",
+          clientSequence: 2,
+          type: "updateCard",
+          entityId: "card-0001",
+          baseFieldVersions: { title: 1 },
+          payload: { title: "Linked task" },
+        },
+        {
+          ...commandBase,
+          operationId: "operation-link-canvas",
+          clientSequence: 3,
+          type: "createCanvasLink",
+          entityId: "link-0001",
+          payload: { cardId: "card-0001", canvasId: "canvas-0001" },
+        },
+      ],
+    );
+
+    expect(result.map((entry) => entry.status)).toEqual(["applied", "applied"]);
+  });
+
   it("enforces board lock inside the command transaction", async () => {
     const firestore = new FakeFirestore();
     getFirestore.mockReturnValue(firestore);
@@ -320,5 +402,56 @@ describe("FirestoreKanbanService", () => {
       status: "rejected",
       code: "board_locked",
     });
+  });
+
+  it("accepts full-payload unlock when every extra board field is unchanged", async () => {
+    const firestore = new FakeFirestore();
+    getFirestore.mockReturnValue(firestore);
+    const service = new FirestoreKanbanService(
+      {} as never,
+      new KanbanCrypto(Buffer.alloc(32, 6)),
+      { eventMs: 1000, operationMs: 1000, invitesPerHour: 10 },
+    );
+    await service.createBoard("user-0001", {
+      id: "board-0001",
+      title: "Roadmap",
+      initialColumnId: "column-0001",
+      initialColumnTitle: "Not started",
+    });
+    await service.applyCommands("user-0001", "board-0001", "client-0001", [
+      {
+        ...commandBase,
+        operationId: "operation-lock",
+        type: "updateBoard",
+        payload: { isLocked: true },
+      },
+    ]);
+
+    const unlock = await service.applyCommands(
+      "user-0001",
+      "board-0001",
+      "client-0001",
+      [
+        {
+          ...commandBase,
+          operationId: "operation-unlock",
+          type: "updateBoard",
+          payload: {
+            title: "Roadmap",
+            roughness: 1,
+            cardRadius: 1,
+            isLocked: false,
+          },
+        },
+      ],
+    );
+
+    expect(unlock[0]).toMatchObject({
+      status: "applied",
+    });
+    expect(unlock[0]?.change?.entityType).toBe("board");
+    expect(unlock[0]?.change?.value).toEqual(
+      expect.objectContaining({ isLocked: false }),
+    );
   });
 });

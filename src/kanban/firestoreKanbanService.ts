@@ -656,6 +656,7 @@ export class FirestoreKanbanService implements KanbanService {
           afterId,
           columnId,
           cardId,
+          canvasId,
           assigneeIds,
           destinationColumnId,
         } = command.payload as Record<string, unknown>;
@@ -677,6 +678,17 @@ export class FirestoreKanbanService implements KanbanService {
         }
         if (typeof cardId === "string") {
           const ref = boardRef.collection("cards").doc(cardId);
+          refs.set(ref.path, ref);
+        }
+        if (
+          command.type === "createCanvasLink" &&
+          typeof canvasId === "string"
+        ) {
+          const ref = this.firestore
+            .collection("users")
+            .doc(userId)
+            .collection("canvases")
+            .doc(canvasId);
           refs.set(ref.path, ref);
         }
         if (typeof destinationColumnId === "string") {
@@ -835,7 +847,11 @@ export class FirestoreKanbanService implements KanbanService {
           const isUnlockOnly =
             command.type === "updateBoard" &&
             command.payload.isLocked === false &&
-            Object.keys(command.payload).every((field) => field === "isLocked");
+            Object.entries(command.payload).every(
+              ([field, value]) =>
+                field === "isLocked" ||
+                value === boardPayload[field as keyof KanbanBoardPayload],
+            );
           if (boardPayload.isLocked && !isUnlockOnly) {
             throw new CommandFailure(
               "rejected",
