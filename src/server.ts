@@ -7,6 +7,8 @@ import { loadConfig } from "./config.js";
 import { getFirebaseAdminApp } from "./firebase.js";
 import { FirestoreWorkspaceService } from "./workspace/firestoreWorkspaceService.js";
 import { R2SceneStorage } from "./workspace/r2SceneStorage.js";
+import { KanbanCrypto } from "./kanban/crypto.js";
+import { FirestoreKanbanService } from "./kanban/firestoreKanbanService.js";
 
 const config = loadConfig();
 const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
@@ -16,6 +18,19 @@ const app = createApp({
   tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
   workspaceService: new FirestoreWorkspaceService(firebaseApp, sceneStorage),
   commentService: new FirestoreCommentService(firebaseApp),
+  kanbanService: new FirestoreKanbanService(
+    firebaseApp,
+    new KanbanCrypto(
+      config.kanban.encryptionKeys,
+      config.kanban.encryptionKeyVersion,
+      config.kanban.emailDigestKey,
+    ),
+    {
+      eventMs: config.kanban.eventRetentionMs,
+      operationMs: config.kanban.operationRetentionMs,
+      invitesPerHour: config.kanban.invitesPerHour,
+    },
+  ),
 });
 
 const server = app.listen(config.port, config.host, () => {
