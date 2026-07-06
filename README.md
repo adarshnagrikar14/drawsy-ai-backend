@@ -19,6 +19,23 @@ the Excalidraw editor core.
 - `POST /v1/canvases/:id/comments` - creates a private comment
 - `DELETE /v1/canvases/:id/comments/:commentId?baseVersion=N` - deletes a comment
 
+### Kanban
+
+- `GET /v1/kanban/boards` - lists authorized boards
+- `POST /v1/kanban/boards` - creates an encrypted board
+- `GET /v1/kanban/boards/:id/snapshot` - loads the canonical board
+- `GET /v1/kanban/boards/:id/changes?afterRevision=N` - loads bounded deltas
+- `GET /v1/kanban/boards/:id/events` - authenticated SSE revision/role stream
+- `POST /v1/kanban/boards/:id/commands` - applies ordered idempotent commands
+- `GET /v1/kanban/boards/:id/members` - lists members
+- `PATCH /v1/kanban/boards/:id/members/:userId` - changes editor/viewer role
+- `DELETE /v1/kanban/boards/:id/members/:userId` - removes access or leaves
+- `POST /v1/kanban/boards/:id/ownership-transfer` - transfers ownership after recent authentication
+- `POST /v1/kanban/boards/:id/invitations` - creates a single-use email-bound invite link
+- `DELETE /v1/kanban/boards/:id/invitations/:invitationId` - revokes an invitation
+- `POST /v1/kanban/invitations/inspect` - inspects a token without exposing board data
+- `POST /v1/kanban/invitations/accept` - accepts with the verified invited email
+
 Protected requests use:
 
 ```http
@@ -37,6 +54,13 @@ writes return `409 version_conflict` instead of overwriting another device.
 Comments live below the authenticated user's canvas in Firestore. They are not
 stored in scene JSON, R2 scene objects, shared links, collaboration payloads, or
 exports. Removing a canvas also removes its comments.
+
+Kanban is local-first in the frontend. Firestore stores normalized board state,
+idempotent operation results, and encrypted delta events. Board/card/checklist
+content and invitation email are protected with per-board AES-256-GCM data keys;
+only wrapped data keys are stored. Realtime uses the authenticated SSE endpoint
+and multiplexed canonical Firestore listeners. It does not poll and does not add
+Kanban traffic to the Excalidraw collaboration server.
 
 Back up `WORKSPACE_ENCRYPTION_KEY` in the deployment secret manager. Losing it
 makes existing workspace scenes unrecoverable.
@@ -86,6 +110,15 @@ npm start
 - `R2_ACCESS_KEY_ID`: server-only R2 access key
 - `R2_SECRET_ACCESS_KEY`: server-only R2 secret
 - `WORKSPACE_ENCRYPTION_KEY`: base64-encoded 32-byte scene encryption key
+- `KANBAN_ENCRYPTION_KEY`: current base64-encoded 32-byte wrapping key; defaults to the workspace key for local compatibility
+- `KANBAN_ENCRYPTION_KEY_VERSION`: positive current key version
+- `KANBAN_ENCRYPTION_PREVIOUS_KEYS`: comma-separated `version:base64-key` entries required during rotation
+- `KANBAN_EMAIL_DIGEST_KEY`: stable base64-encoded 32-byte invitation-email HMAC key
+- `KANBAN_SSE_HEARTBEAT_MS`: keepalive interval; does not query Firestore
+- `KANBAN_EVENT_RETENTION_DAYS`: encrypted delta retention/TTL
+- `KANBAN_OPERATION_RETENTION_DAYS`: idempotency result retention/TTL
+- `KANBAN_INVITES_PER_HOUR`: durable per-owner/board invitation limit
+- `KANBAN_RECENT_AUTH_SECONDS`: maximum auth age for ownership transfer
 
 This repository does not contain Firebase client configuration, service-account
 keys, R2 credentials, or frontend code.
