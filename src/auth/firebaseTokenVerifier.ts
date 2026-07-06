@@ -25,6 +25,10 @@ export const createFirebaseTokenVerifier = (app: App): TokenVerifier => {
         emailVerified: decoded.email_verified ?? false,
         name: getOptionalStringClaim(claims, "name"),
         picture: getOptionalStringClaim(claims, "picture"),
+        authTime:
+          typeof decoded.auth_time === "number"
+            ? decoded.auth_time * 1000
+            : undefined,
       };
     },
   };

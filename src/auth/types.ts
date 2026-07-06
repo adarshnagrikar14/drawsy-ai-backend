@@ -4,6 +4,7 @@ export type AuthenticatedUser = {
   emailVerified: boolean;
   name: string | null;
   picture: string | null;
+  authTime?: number;
 };
 
 export interface TokenVerifier {
