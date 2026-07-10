@@ -7,6 +7,7 @@ import { ApiError } from "../src/http/apiError.js";
 import type { AppConfig } from "../src/config.js";
 import type { TokenVerifier } from "../src/auth/types.js";
 import type { WorkspaceService } from "../src/workspace/types.js";
+import type { PresentationService } from "../src/presentations/types.js";
 
 const config: AppConfig = {
   env: "test",
@@ -60,6 +61,26 @@ const workspaceService: WorkspaceService = {
   deleteCanvas: () => Promise.resolve(),
 };
 
+const presentationService: PresentationService = {
+  getPresentations: () => Promise.resolve({ presentations: [] }),
+  getPresentationScene: () => Promise.resolve({}),
+  putPresentation: (_userId, { baseVersion, scene: _scene, ...presentation }) =>
+    Promise.resolve({
+      ...presentation,
+      version: baseVersion + 1,
+      contentHash: "b".repeat(64),
+    }),
+  patchPresentation: (_userId, { baseVersion, ...presentation }) =>
+    Promise.resolve({
+      ...presentation,
+      version: baseVersion + 1,
+      createdAt: 1,
+      updatedAt: 1,
+      contentHash: "b".repeat(64),
+    }),
+  deletePresentation: () => Promise.resolve(),
+};
+
 const createVerifier = () => {
   const verify = vi.fn((token: string) => {
     if (token !== "valid-token") {
@@ -82,7 +103,12 @@ const createVerifier = () => {
 };
 
 const createTestApp = (tokenVerifier: TokenVerifier) =>
-  createApp({ config, tokenVerifier, workspaceService });
+  createApp({
+    config,
+    tokenVerifier,
+    workspaceService,
+    presentationService,
+  });
 
 describe("Drawsy backend API", () => {
   it("reports service health without authentication", async () => {
@@ -328,5 +354,85 @@ describe("Drawsy backend API", () => {
         message: "The project changed on another device.",
       },
     });
+  });
+
+  it("returns only the authenticated user's presentations", async () => {
+    const { verifier } = createVerifier();
+    const getPresentations = vi.fn(() =>
+      Promise.resolve({ presentations: [] }),
+    );
+    const service = { ...presentationService, getPresentations };
+    const response = await request(
+      createApp({
+        config,
+        tokenVerifier: verifier,
+        workspaceService,
+        presentationService: service,
+      }),
+    )
+      .get("/v1/presentations")
+      .set("authorization", "Bearer valid-token");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ presentations: [] });
+    expect(getPresentations).toHaveBeenCalledWith("user-1");
+  });
+
+  it("validates and saves a presentation with an optimistic base version", async () => {
+    const { verifier } = createVerifier();
+    const putPresentation = vi.fn<PresentationService["putPresentation"]>(
+      (...arguments_) => presentationService.putPresentation(...arguments_),
+    );
+    const service = { ...presentationService, putPresentation };
+    const payload = {
+      id: "presentation-01",
+      title: "Product launch",
+      baseVersion: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      lastOpenedAt: 1,
+      scene: {
+        elements: [],
+        appState: {},
+        files: {},
+        presentation: { version: 1, builds: [], transitions: {} },
+      },
+    };
+    const response = await request(
+      createApp({
+        config,
+        tokenVerifier: verifier,
+        workspaceService,
+        presentationService: service,
+      }),
+    )
+      .put("/v1/presentations/presentation-01")
+      .set("authorization", "Bearer valid-token")
+      .send(payload);
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      presentation: { id: "presentation-01", version: 1 },
+    });
+    expect(putPresentation).toHaveBeenCalledWith("user-1", payload);
+  });
+
+  it("rejects a presentation path/body identifier mismatch", async () => {
+    const { verifier } = createVerifier();
+    const response = await request(createTestApp(verifier))
+      .put("/v1/presentations/presentation-01")
+      .set("authorization", "Bearer valid-token")
+      .send({
+        id: "presentation-02",
+        title: "Product launch",
+        baseVersion: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        lastOpenedAt: 1,
+        scene: {},
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ error: { code: "id_mismatch" } });
   });
 });

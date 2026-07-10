@@ -9,6 +9,7 @@ import { FirestoreWorkspaceService } from "./workspace/firestoreWorkspaceService
 import { R2SceneStorage } from "./workspace/r2SceneStorage.js";
 import { KanbanCrypto } from "./kanban/crypto.js";
 import { FirestoreKanbanService } from "./kanban/firestoreKanbanService.js";
+import { FirestorePresentationService } from "./presentations/firestorePresentationService.js";
 
 const config = loadConfig();
 const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
@@ -17,6 +18,10 @@ const app = createApp({
   config,
   tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
   workspaceService: new FirestoreWorkspaceService(firebaseApp, sceneStorage),
+  presentationService: new FirestorePresentationService(
+    firebaseApp,
+    sceneStorage,
+  ),
   commentService: new FirestoreCommentService(firebaseApp),
   kanbanService: new FirestoreKanbanService(
     firebaseApp,

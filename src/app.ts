@@ -10,12 +10,14 @@ import { ApiError } from "./http/apiError.js";
 import { createCommentsRouter } from "./comments/router.js";
 import { createWorkspaceRouter } from "./workspace/router.js";
 import { createKanbanRouter } from "./kanban/router.js";
+import { createPresentationsRouter } from "./presentations/router.js";
 
 import type { AppConfig } from "./config.js";
 import type { TokenVerifier } from "./auth/types.js";
 import type { CommentService } from "./comments/types.js";
 import type { WorkspaceService } from "./workspace/types.js";
 import type { KanbanService } from "./kanban/types.js";
+import type { PresentationService } from "./presentations/types.js";
 import type { NextFunction, Request, Response } from "express";
 
 type AppDependencies = {
@@ -24,6 +26,7 @@ type AppDependencies = {
   workspaceService: WorkspaceService;
   commentService?: CommentService;
   kanbanService?: KanbanService;
+  presentationService?: PresentationService;
 };
 
 export const createApp = ({
@@ -32,6 +35,7 @@ export const createApp = ({
   workspaceService,
   commentService,
   kanbanService,
+  presentationService,
 }: AppDependencies) => {
   const app = express();
   const authenticate = createAuthenticate(tokenVerifier);
@@ -81,6 +85,12 @@ export const createApp = ({
     "/v1",
     createWorkspaceRouter(authenticate, workspaceService, commentService),
   );
+  if (presentationService) {
+    app.use(
+      "/v1",
+      createPresentationsRouter(authenticate, presentationService),
+    );
+  }
   if (commentService) {
     app.use(
       "/v1/canvases/:canvasId/comments",
@@ -129,7 +139,7 @@ export const createApp = ({
         response.status(413).json({
           error: {
             code: "scene_too_large",
-            message: "The canvas exceeds the workspace size limit.",
+            message: "The document exceeds the storage size limit.",
           },
           requestId: response.locals.requestId,
         });
