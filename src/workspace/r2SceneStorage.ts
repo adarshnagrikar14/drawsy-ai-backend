@@ -43,7 +43,7 @@ export const decryptScene = (envelope: Buffer, key: Buffer): unknown => {
     throw new ApiError(
       502,
       "scene_unavailable",
-      "The canvas scene has an invalid storage envelope.",
+      "The document scene has an invalid storage envelope.",
     );
   }
   const ivStart = 1;
@@ -68,7 +68,11 @@ export interface SceneStorage {
   put(objectKey: string, scene: unknown): Promise<void>;
   get(objectKey: string): Promise<unknown>;
   delete(objectKey: string): Promise<void>;
-  createObjectKey(userId: string, canvasId: string): string;
+  createObjectKey(
+    userId: string,
+    documentId: string,
+    namespace?: "canvases" | "presentations",
+  ): string;
 }
 
 export class R2SceneStorage implements SceneStorage {
@@ -86,8 +90,12 @@ export class R2SceneStorage implements SceneStorage {
     });
   }
 
-  createObjectKey(userId: string, canvasId: string) {
-    return `${this.config.r2.keyPrefix}users/${userId}/canvases/${canvasId}/${randomUUID()}.bin`;
+  createObjectKey(
+    userId: string,
+    documentId: string,
+    namespace: "canvases" | "presentations" = "canvases",
+  ) {
+    return `${this.config.r2.keyPrefix}users/${userId}/${namespace}/${documentId}/${randomUUID()}.bin`;
   }
 
   async put(objectKey: string, scene: unknown) {
@@ -96,7 +104,7 @@ export class R2SceneStorage implements SceneStorage {
       throw new ApiError(
         413,
         "scene_too_large",
-        "The canvas exceeds the workspace size limit.",
+        "The document exceeds the storage size limit.",
       );
     }
 
@@ -126,7 +134,7 @@ export class R2SceneStorage implements SceneStorage {
         throw new ApiError(
           502,
           "scene_unavailable",
-          "The canvas scene is unavailable.",
+          "The document scene is unavailable.",
         );
       }
       return decryptScene(body, this.config.r2.encryptionKey);
@@ -140,7 +148,7 @@ export class R2SceneStorage implements SceneStorage {
         throw new ApiError(
           404,
           "scene_not_found",
-          "The canvas scene was not found.",
+          "The document scene was not found.",
         );
       }
       throw error;
