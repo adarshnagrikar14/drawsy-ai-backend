@@ -12,6 +12,7 @@ import { createWorkspaceRouter } from "./workspace/router.js";
 import { createKanbanRouter } from "./kanban/router.js";
 import { createPresentationsRouter } from "./presentations/router.js";
 import { createJiraRouter } from "./jira/router.js";
+import { createConnectorsRouter } from "./connectors/router.js";
 
 import type { AppConfig } from "./config.js";
 import type { TokenVerifier } from "./auth/types.js";
@@ -20,6 +21,7 @@ import type { WorkspaceService } from "./workspace/types.js";
 import type { KanbanService } from "./kanban/types.js";
 import type { PresentationService } from "./presentations/types.js";
 import type { JiraService } from "./jira/types.js";
+import type { ConnectorService } from "./connectors/types.js";
 import type { NextFunction, Request, Response } from "express";
 
 type AppDependencies = {
@@ -30,6 +32,7 @@ type AppDependencies = {
   kanbanService?: KanbanService;
   presentationService?: PresentationService;
   jiraService?: JiraService;
+  connectorService?: ConnectorService;
 };
 
 export const createApp = ({
@@ -40,6 +43,7 @@ export const createApp = ({
   kanbanService,
   presentationService,
   jiraService,
+  connectorService,
 }: AppDependencies) => {
   const app = express();
   const authenticate = createAuthenticate(tokenVerifier);
@@ -80,6 +84,17 @@ export const createApp = ({
     app.use(
       "/v1",
       createJiraRouter(authenticate, jiraService, config.jira.successUrl),
+    );
+  }
+
+  if (connectorService && config.connectors) {
+    app.use(
+      "/v1",
+      createConnectorsRouter(
+        authenticate,
+        connectorService,
+        config.connectors.successUrl,
+      ),
     );
   }
 

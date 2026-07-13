@@ -36,6 +36,34 @@ the Excalidraw editor core.
 - `POST /v1/kanban/invitations/inspect` - inspects a token without exposing board data
 - `POST /v1/kanban/invitations/accept` - accepts with the verified invited email
 
+### Connectors
+
+- `GET /v1/connectors` - lists configured providers and the user's connections
+- `POST /v1/connectors/:providerId/oauth/start` - starts provider OAuth
+- `GET /v1/connectors/oauth/attempts/:attemptId` - reports OAuth completion
+- `GET /v1/connectors/:providerId/oauth/callback` - public OAuth callback
+- `DELETE /v1/connectors/connections/:connectionId` - revokes and removes access
+
+The connector control plane owns OAuth, encrypted credentials, account-scoped
+permissions, refresh, and revocation for Google Workspace, Notion, Slack, and
+GitHub. One Google Workspace account supplies Mail, Calendar, and Drive with
+granted read-only scopes. Provider adapters keep product APIs and future MCP
+consumers behind the same authorization boundary. A later Drawsy MCP service
+should call this internal connector layer; it must never receive or expose
+provider refresh tokens.
+
+Provider applications must be registered before their cards become available:
+
+- Google Workspace: web OAuth client, enabled Gmail/Calendar/Drive APIs, consent
+  screen, and Google verification for the requested restricted scopes.
+- Notion: public connection with the backend callback URI.
+- Slack: distributed or approved internal app with the documented user scopes.
+- GitHub: GitHub App with installation permissions and user authorization.
+
+Use HTTPS callback/success URLs and a deployment secret manager in production.
+Configure Firestore TTL on `deleteAt` for the `connectorOAuthStates` and
+`connectorOAuthAttempts` collection groups.
+
 Protected requests use:
 
 ```http
@@ -110,6 +138,18 @@ npm start
 - `R2_ACCESS_KEY_ID`: server-only R2 access key
 - `R2_SECRET_ACCESS_KEY`: server-only R2 secret
 - `WORKSPACE_ENCRYPTION_KEY`: base64-encoded 32-byte scene encryption key
+- `GOOGLE_WORKSPACE_OAUTH_CLIENT_ID`: Google web OAuth client ID
+- `GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET`: server-only Google OAuth secret
+- `GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI`: exact backend OAuth callback URL
+- `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URI`: Notion public connection OAuth
+- `SLACK_OAUTH_CLIENT_ID`, `SLACK_OAUTH_CLIENT_SECRET`, `SLACK_OAUTH_REDIRECT_URI`: Slack app OAuth
+- `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`: GitHub App user OAuth
+- `CONNECTORS_OAUTH_SUCCESS_URL`: trusted frontend URL after OAuth completes
+- `CONNECTOR_ENCRYPTION_KEY`: optional dedicated base64-encoded 32-byte token key
+- `CONNECTOR_ENCRYPTION_KEY_VERSION`: positive current connector key version
+- `CONNECTOR_ENCRYPTION_PREVIOUS_KEYS`: comma-separated `version:base64-key` rotation entries
+- `CONNECTOR_OAUTH_STATE_TTL_SECONDS`: one-use connector OAuth state lifetime
+- `CONNECTOR_HTTP_TIMEOUT_MS`: connector provider request timeout
 - `KANBAN_ENCRYPTION_KEY`: current base64-encoded 32-byte wrapping key; defaults to the workspace key for local compatibility
 - `KANBAN_ENCRYPTION_KEY_VERSION`: positive current key version
 - `KANBAN_ENCRYPTION_PREVIOUS_KEYS`: comma-separated `version:base64-key` entries required during rotation

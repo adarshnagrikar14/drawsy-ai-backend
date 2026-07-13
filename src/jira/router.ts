@@ -29,6 +29,7 @@ export const createJiraRouter = (
   const router = Router();
 
   router.get("/jira/oauth/callback", async (request, response) => {
+    response.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
     const result = z
       .object({
         code: oauthCode.optional(),
@@ -91,7 +92,7 @@ export const createJiraRouter = (
     response.redirect(303, target.toString());
   });
 
-  router.use(authenticate);
+  router.use("/jira", authenticate);
 
   router.post("/jira/oauth/start", async (_request, response) => {
     response.json(await service.getAuthorizationUrl(userId(response)));

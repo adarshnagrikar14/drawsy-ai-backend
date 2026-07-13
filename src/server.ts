@@ -12,10 +12,52 @@ import { FirestoreKanbanService } from "./kanban/firestoreKanbanService.js";
 import { FirestorePresentationService } from "./presentations/firestorePresentationService.js";
 import { FirestoreJiraConnectionStore } from "./jira/firestoreJiraConnectionStore.js";
 import { AtlassianJiraService } from "./jira/atlassianJiraService.js";
+import { DefaultConnectorService } from "./connectors/connectorService.js";
+import { FirestoreConnectorConnectionStore } from "./connectors/firestoreConnectorConnectionStore.js";
+import { GoogleWorkspaceProvider } from "./connectors/googleWorkspaceProvider.js";
+import { NotionProvider } from "./connectors/notionProvider.js";
+import { SlackProvider } from "./connectors/slackProvider.js";
+import { GitHubProvider } from "./connectors/githubProvider.js";
 
 const config = loadConfig();
 const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
 const sceneStorage = new R2SceneStorage(config);
+const connectorProviders = config.connectors
+  ? [
+      ...(config.connectors.googleWorkspace
+        ? [
+            new GoogleWorkspaceProvider(
+              config.connectors.googleWorkspace,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+      ...(config.connectors.notion
+        ? [
+            new NotionProvider(
+              config.connectors.notion,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+      ...(config.connectors.slack
+        ? [
+            new SlackProvider(
+              config.connectors.slack,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+      ...(config.connectors.github
+        ? [
+            new GitHubProvider(
+              config.connectors.github,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+    ]
+  : [];
 const app = createApp({
   config,
   tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
@@ -42,6 +84,13 @@ const app = createApp({
     ? new AtlassianJiraService(
         config.jira,
         new FirestoreJiraConnectionStore(firebaseApp),
+      )
+    : undefined,
+  connectorService: config.connectors
+    ? new DefaultConnectorService(
+        config.connectors,
+        connectorProviders,
+        new FirestoreConnectorConnectionStore(firebaseApp),
       )
     : undefined,
 });
