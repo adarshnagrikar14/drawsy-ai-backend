@@ -51,6 +51,17 @@ describe("loadConfig", () => {
         invitesPerHour: 20,
         recentAuthMs: 300_000,
       },
+      connectors: {
+        googleWorkspace: undefined,
+        notion: undefined,
+        slack: undefined,
+        github: undefined,
+        successUrl: "http://localhost:3001/connectors-oauth-complete.html",
+        encryptionKeys: new Map([[1, Buffer.alloc(32, 1)]]),
+        encryptionKeyVersion: 1,
+        stateTtlMs: 600_000,
+        httpTimeoutMs: 15_000,
+      },
     });
   });
 
@@ -89,5 +100,73 @@ describe("loadConfig", () => {
 
     expect(config.kanban.encryptionKeys.get(1)).toEqual(previous);
     expect(config.kanban.encryptionKeys.get(2)).toEqual(current);
+  });
+
+  it("configures Google Workspace connectors as one optional unit", () => {
+    const encryptionKey = Buffer.alloc(32, 5);
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: encryptionKey.toString("base64"),
+      GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: "google-client",
+      GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: "google-secret",
+      GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI:
+        "http://127.0.0.1:3004/v1/connectors/google-workspace/oauth/callback",
+      CONNECTORS_OAUTH_SUCCESS_URL: "http://localhost:3001",
+    });
+
+    expect(config.connectors).toEqual({
+      googleWorkspace: {
+        clientId: "google-client",
+        clientSecret: "google-secret",
+        redirectUri:
+          "http://127.0.0.1:3004/v1/connectors/google-workspace/oauth/callback",
+      },
+      notion: undefined,
+      slack: undefined,
+      github: undefined,
+      successUrl: "http://localhost:3001",
+      encryptionKeys: new Map([[1, encryptionKey]]),
+      encryptionKeyVersion: 1,
+      stateTtlMs: 600_000,
+      httpTimeoutMs: 15_000,
+    });
+  });
+
+  it("rejects partial Google Workspace connector OAuth configuration", () => {
+    expect(() =>
+      loadConfig({
+        FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+        R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+        R2_BUCKET_NAME: "drawsy",
+        R2_ACCESS_KEY_ID: "key",
+        R2_SECRET_ACCESS_KEY: "secret",
+        WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: "google-client",
+      }),
+    ).toThrow("all Google Workspace connector OAuth values");
+  });
+
+  it("rejects insecure connector OAuth URLs in production", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "production",
+        FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+        R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+        R2_BUCKET_NAME: "drawsy",
+        R2_ACCESS_KEY_ID: "key",
+        R2_SECRET_ACCESS_KEY: "secret",
+        WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        GITHUB_OAUTH_CLIENT_ID: "github-client",
+        GITHUB_OAUTH_CLIENT_SECRET: "github-secret",
+        GITHUB_OAUTH_REDIRECT_URI:
+          "http://drawsy.example/v1/connectors/github/oauth/callback",
+        CONNECTORS_OAUTH_SUCCESS_URL:
+          "https://drawsy.example/connectors-oauth-complete.html",
+      }),
+    ).toThrow("connector OAuth URLs must use HTTPS");
   });
 });

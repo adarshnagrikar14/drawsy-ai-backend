@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+const optionalText = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().min(1).optional(),
+);
+const optionalUrl = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.url().optional(),
+);
+
 const environmentSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -97,10 +108,10 @@ const environmentSchema = z.object({
     .min(60)
     .max(3600)
     .default(300),
-  ATLASSIAN_OAUTH_CLIENT_ID: z.string().trim().min(1).optional(),
-  ATLASSIAN_OAUTH_CLIENT_SECRET: z.string().trim().min(1).optional(),
-  ATLASSIAN_OAUTH_REDIRECT_URI: z.url().optional(),
-  JIRA_OAUTH_SUCCESS_URL: z.url().optional(),
+  ATLASSIAN_OAUTH_CLIENT_ID: optionalText,
+  ATLASSIAN_OAUTH_CLIENT_SECRET: optionalText,
+  ATLASSIAN_OAUTH_REDIRECT_URI: optionalUrl,
+  JIRA_OAUTH_SUCCESS_URL: optionalUrl,
   JIRA_ENCRYPTION_KEY: z
     .string()
     .trim()
@@ -128,6 +139,55 @@ const environmentSchema = z.object({
     .max(1800)
     .default(600),
   JIRA_HTTP_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(60_000)
+    .default(15_000),
+  GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: optionalText,
+  GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: optionalText,
+  GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI: optionalUrl,
+  NOTION_OAUTH_CLIENT_ID: optionalText,
+  NOTION_OAUTH_CLIENT_SECRET: optionalText,
+  NOTION_OAUTH_REDIRECT_URI: optionalUrl,
+  SLACK_OAUTH_CLIENT_ID: optionalText,
+  SLACK_OAUTH_CLIENT_SECRET: optionalText,
+  SLACK_OAUTH_REDIRECT_URI: optionalUrl,
+  GITHUB_OAUTH_CLIENT_ID: optionalText,
+  GITHUB_OAUTH_CLIENT_SECRET: optionalText,
+  GITHUB_OAUTH_REDIRECT_URI: optionalUrl,
+  CONNECTORS_OAUTH_SUCCESS_URL: optionalUrl,
+  CONNECTOR_ENCRYPTION_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value, context) => {
+      if (!value) {
+        return undefined;
+      }
+      const key = Buffer.from(value, "base64");
+      if (key.byteLength !== 32) {
+        context.addIssue({
+          code: "custom",
+          message: "must decode to exactly 32 bytes",
+        });
+        return z.NEVER;
+      }
+      return key;
+    }),
+  CONNECTOR_ENCRYPTION_KEY_VERSION: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1),
+  CONNECTOR_ENCRYPTION_PREVIOUS_KEYS: z.string().trim().default(""),
+  CONNECTOR_OAUTH_STATE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(1800)
+    .default(600),
+  CONNECTOR_HTTP_TIMEOUT_MS: z.coerce
     .number()
     .int()
     .min(1000)
@@ -166,6 +226,21 @@ export type AppConfig = {
     clientId: string;
     clientSecret: string;
     redirectUri: string;
+    successUrl: string;
+    encryptionKeys: ReadonlyMap<number, Buffer>;
+    encryptionKeyVersion: number;
+    stateTtlMs: number;
+    httpTimeoutMs: number;
+  };
+  connectors?: {
+    googleWorkspace?: {
+      clientId: string;
+      clientSecret: string;
+      redirectUri: string;
+    };
+    notion?: { clientId: string; clientSecret: string; redirectUri: string };
+    slack?: { clientId: string; clientSecret: string; redirectUri: string };
+    github?: { clientId: string; clientSecret: string; redirectUri: string };
     successUrl: string;
     encryptionKeys: ReadonlyMap<number, Buffer>;
     encryptionKeyVersion: number;
@@ -244,6 +319,95 @@ export const loadConfig = (
     jiraEncryptionKeys.set(version, key);
   }
 
+  const googleWorkspaceOAuthValues = [
+    parsed.data.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID,
+    parsed.data.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
+    parsed.data.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI,
+  ];
+  const notionOAuthValues = [
+    parsed.data.NOTION_OAUTH_CLIENT_ID,
+    parsed.data.NOTION_OAUTH_CLIENT_SECRET,
+    parsed.data.NOTION_OAUTH_REDIRECT_URI,
+  ];
+  const slackOAuthValues = [
+    parsed.data.SLACK_OAUTH_CLIENT_ID,
+    parsed.data.SLACK_OAUTH_CLIENT_SECRET,
+    parsed.data.SLACK_OAUTH_REDIRECT_URI,
+  ];
+  const githubOAuthValues = [
+    parsed.data.GITHUB_OAUTH_CLIENT_ID,
+    parsed.data.GITHUB_OAUTH_CLIENT_SECRET,
+    parsed.data.GITHUB_OAUTH_REDIRECT_URI,
+  ];
+  const validateProviderOAuth = (name: string, values: unknown[]) => {
+    if (values.some(Boolean) && !values.every(Boolean)) {
+      throw new Error(
+        `Invalid environment configuration: all ${name} connector OAuth values must be configured together`,
+      );
+    }
+    return values.every(Boolean);
+  };
+  const hasGoogleWorkspaceOAuth = validateProviderOAuth(
+    "Google Workspace",
+    googleWorkspaceOAuthValues,
+  );
+  const hasNotionOAuth = validateProviderOAuth("Notion", notionOAuthValues);
+  const hasSlackOAuth = validateProviderOAuth("Slack", slackOAuthValues);
+  const hasGithubOAuth = validateProviderOAuth("GitHub", githubOAuthValues);
+  const hasAnyConnectorProvider =
+    hasGoogleWorkspaceOAuth ||
+    hasNotionOAuth ||
+    hasSlackOAuth ||
+    hasGithubOAuth;
+  if (
+    hasAnyConnectorProvider &&
+    parsed.data.NODE_ENV === "production" &&
+    !parsed.data.CONNECTORS_OAUTH_SUCCESS_URL
+  ) {
+    throw new Error(
+      "Invalid environment configuration: CONNECTORS_OAUTH_SUCCESS_URL is required when connectors are enabled in production",
+    );
+  }
+  if (hasAnyConnectorProvider && parsed.data.NODE_ENV === "production") {
+    const oauthUrls = [
+      parsed.data.CONNECTORS_OAUTH_SUCCESS_URL,
+      parsed.data.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI,
+      parsed.data.NOTION_OAUTH_REDIRECT_URI,
+      parsed.data.SLACK_OAUTH_REDIRECT_URI,
+      parsed.data.GITHUB_OAUTH_REDIRECT_URI,
+    ].filter((value): value is string => Boolean(value));
+    if (oauthUrls.some((value) => new URL(value).protocol !== "https:")) {
+      throw new Error(
+        "Invalid environment configuration: connector OAuth URLs must use HTTPS in production",
+      );
+    }
+  }
+  const connectorCurrentKey =
+    parsed.data.CONNECTOR_ENCRYPTION_KEY ||
+    parsed.data.WORKSPACE_ENCRYPTION_KEY;
+  const connectorEncryptionKeys = new Map<number, Buffer>([
+    [parsed.data.CONNECTOR_ENCRYPTION_KEY_VERSION, connectorCurrentKey],
+  ]);
+  for (const entry of parsed.data.CONNECTOR_ENCRYPTION_PREVIOUS_KEYS.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)) {
+    const separator = entry.indexOf(":");
+    const version = Number(entry.slice(0, separator));
+    const key = Buffer.from(entry.slice(separator + 1), "base64");
+    if (
+      separator <= 0 ||
+      !Number.isInteger(version) ||
+      version <= 0 ||
+      key.byteLength !== 32 ||
+      connectorEncryptionKeys.has(version)
+    ) {
+      throw new Error(
+        "Invalid CONNECTOR_ENCRYPTION_PREVIOUS_KEYS configuration",
+      );
+    }
+    connectorEncryptionKeys.set(version, key);
+  }
+
   return {
     env: parsed.data.NODE_ENV,
     host: parsed.data.APP_HOST,
@@ -293,5 +457,42 @@ export const loadConfig = (
           httpTimeoutMs: parsed.data.JIRA_HTTP_TIMEOUT_MS,
         }
       : undefined,
+    connectors: {
+      googleWorkspace: hasGoogleWorkspaceOAuth
+        ? {
+            clientId: parsed.data.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID!,
+            clientSecret: parsed.data.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET!,
+            redirectUri: parsed.data.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI!,
+          }
+        : undefined,
+      notion: hasNotionOAuth
+        ? {
+            clientId: parsed.data.NOTION_OAUTH_CLIENT_ID!,
+            clientSecret: parsed.data.NOTION_OAUTH_CLIENT_SECRET!,
+            redirectUri: parsed.data.NOTION_OAUTH_REDIRECT_URI!,
+          }
+        : undefined,
+      slack: hasSlackOAuth
+        ? {
+            clientId: parsed.data.SLACK_OAUTH_CLIENT_ID!,
+            clientSecret: parsed.data.SLACK_OAUTH_CLIENT_SECRET!,
+            redirectUri: parsed.data.SLACK_OAUTH_REDIRECT_URI!,
+          }
+        : undefined,
+      github: hasGithubOAuth
+        ? {
+            clientId: parsed.data.GITHUB_OAUTH_CLIENT_ID!,
+            clientSecret: parsed.data.GITHUB_OAUTH_CLIENT_SECRET!,
+            redirectUri: parsed.data.GITHUB_OAUTH_REDIRECT_URI!,
+          }
+        : undefined,
+      successUrl:
+        parsed.data.CONNECTORS_OAUTH_SUCCESS_URL ||
+        "http://localhost:3001/connectors-oauth-complete.html",
+      encryptionKeys: connectorEncryptionKeys,
+      encryptionKeyVersion: parsed.data.CONNECTOR_ENCRYPTION_KEY_VERSION,
+      stateTtlMs: parsed.data.CONNECTOR_OAUTH_STATE_TTL_SECONDS * 1000,
+      httpTimeoutMs: parsed.data.CONNECTOR_HTTP_TIMEOUT_MS,
+    },
   };
 };
