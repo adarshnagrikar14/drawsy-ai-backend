@@ -97,6 +97,42 @@ const environmentSchema = z.object({
     .min(60)
     .max(3600)
     .default(300),
+  ATLASSIAN_OAUTH_CLIENT_ID: z.string().trim().min(1).optional(),
+  ATLASSIAN_OAUTH_CLIENT_SECRET: z.string().trim().min(1).optional(),
+  ATLASSIAN_OAUTH_REDIRECT_URI: z.url().optional(),
+  JIRA_OAUTH_SUCCESS_URL: z.url().optional(),
+  JIRA_ENCRYPTION_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value, context) => {
+      if (!value) {
+        return undefined;
+      }
+      const key = Buffer.from(value, "base64");
+      if (key.byteLength !== 32) {
+        context.addIssue({
+          code: "custom",
+          message: "must decode to exactly 32 bytes",
+        });
+        return z.NEVER;
+      }
+      return key;
+    }),
+  JIRA_ENCRYPTION_KEY_VERSION: z.coerce.number().int().positive().default(1),
+  JIRA_ENCRYPTION_PREVIOUS_KEYS: z.string().trim().default(""),
+  JIRA_OAUTH_STATE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(1800)
+    .default(600),
+  JIRA_HTTP_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(60_000)
+    .default(15_000),
 });
 
 export type AppConfig = {
@@ -125,6 +161,16 @@ export type AppConfig = {
     operationRetentionMs: number;
     invitesPerHour: number;
     recentAuthMs: number;
+  };
+  jira?: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    successUrl: string;
+    encryptionKeys: ReadonlyMap<number, Buffer>;
+    encryptionKeyVersion: number;
+    stateTtlMs: number;
+    httpTimeoutMs: number;
   };
 };
 
@@ -160,6 +206,42 @@ export const loadConfig = (
       throw new Error("Invalid KANBAN_ENCRYPTION_PREVIOUS_KEYS configuration");
     }
     kanbanEncryptionKeys.set(version, key);
+  }
+
+  const jiraOAuthValues = [
+    parsed.data.ATLASSIAN_OAUTH_CLIENT_ID,
+    parsed.data.ATLASSIAN_OAUTH_CLIENT_SECRET,
+    parsed.data.ATLASSIAN_OAUTH_REDIRECT_URI,
+    parsed.data.JIRA_OAUTH_SUCCESS_URL,
+  ];
+  const hasAnyJiraOAuthValue = jiraOAuthValues.some(Boolean);
+  const hasAllJiraOAuthValues = jiraOAuthValues.every(Boolean);
+  if (hasAnyJiraOAuthValue && !hasAllJiraOAuthValues) {
+    throw new Error(
+      "Invalid environment configuration: all Jira OAuth values must be configured together",
+    );
+  }
+  const jiraCurrentKey =
+    parsed.data.JIRA_ENCRYPTION_KEY || parsed.data.WORKSPACE_ENCRYPTION_KEY;
+  const jiraEncryptionKeys = new Map<number, Buffer>([
+    [parsed.data.JIRA_ENCRYPTION_KEY_VERSION, jiraCurrentKey],
+  ]);
+  for (const entry of parsed.data.JIRA_ENCRYPTION_PREVIOUS_KEYS.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)) {
+    const separator = entry.indexOf(":");
+    const version = Number(entry.slice(0, separator));
+    const key = Buffer.from(entry.slice(separator + 1), "base64");
+    if (
+      separator <= 0 ||
+      !Number.isInteger(version) ||
+      version <= 0 ||
+      key.byteLength !== 32 ||
+      jiraEncryptionKeys.has(version)
+    ) {
+      throw new Error("Invalid JIRA_ENCRYPTION_PREVIOUS_KEYS configuration");
+    }
+    jiraEncryptionKeys.set(version, key);
   }
 
   return {
@@ -199,5 +281,17 @@ export const loadConfig = (
       invitesPerHour: parsed.data.KANBAN_INVITES_PER_HOUR,
       recentAuthMs: parsed.data.KANBAN_RECENT_AUTH_SECONDS * 1000,
     },
+    jira: hasAllJiraOAuthValues
+      ? {
+          clientId: parsed.data.ATLASSIAN_OAUTH_CLIENT_ID!,
+          clientSecret: parsed.data.ATLASSIAN_OAUTH_CLIENT_SECRET!,
+          redirectUri: parsed.data.ATLASSIAN_OAUTH_REDIRECT_URI!,
+          successUrl: parsed.data.JIRA_OAUTH_SUCCESS_URL!,
+          encryptionKeys: jiraEncryptionKeys,
+          encryptionKeyVersion: parsed.data.JIRA_ENCRYPTION_KEY_VERSION,
+          stateTtlMs: parsed.data.JIRA_OAUTH_STATE_TTL_SECONDS * 1000,
+          httpTimeoutMs: parsed.data.JIRA_HTTP_TIMEOUT_MS,
+        }
+      : undefined,
   };
 };
