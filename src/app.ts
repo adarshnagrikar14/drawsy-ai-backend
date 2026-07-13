@@ -11,6 +11,7 @@ import { createCommentsRouter } from "./comments/router.js";
 import { createWorkspaceRouter } from "./workspace/router.js";
 import { createKanbanRouter } from "./kanban/router.js";
 import { createPresentationsRouter } from "./presentations/router.js";
+import { createJiraRouter } from "./jira/router.js";
 
 import type { AppConfig } from "./config.js";
 import type { TokenVerifier } from "./auth/types.js";
@@ -18,6 +19,7 @@ import type { CommentService } from "./comments/types.js";
 import type { WorkspaceService } from "./workspace/types.js";
 import type { KanbanService } from "./kanban/types.js";
 import type { PresentationService } from "./presentations/types.js";
+import type { JiraService } from "./jira/types.js";
 import type { NextFunction, Request, Response } from "express";
 
 type AppDependencies = {
@@ -27,6 +29,7 @@ type AppDependencies = {
   commentService?: CommentService;
   kanbanService?: KanbanService;
   presentationService?: PresentationService;
+  jiraService?: JiraService;
 };
 
 export const createApp = ({
@@ -36,6 +39,7 @@ export const createApp = ({
   commentService,
   kanbanService,
   presentationService,
+  jiraService,
 }: AppDependencies) => {
   const app = express();
   const authenticate = createAuthenticate(tokenVerifier);
@@ -71,6 +75,13 @@ export const createApp = ({
     }
     response.status(200).json({ user });
   });
+
+  if (jiraService && config.jira) {
+    app.use(
+      "/v1",
+      createJiraRouter(authenticate, jiraService, config.jira.successUrl),
+    );
+  }
 
   if (kanbanService) {
     app.use(
