@@ -119,6 +119,46 @@ export const createConnectorsRouter = (
     },
   );
 
+  router.get(
+    "/connectors/:providerId/install/callback",
+    async (request, response) => {
+      response.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+      const params = z.object({ providerId }).safeParse(request.params);
+      const query = z
+        .object({
+          installation_id: z.coerce.number().int().positive(),
+          state: id,
+          setup_action: z.string().trim().max(64).optional(),
+        })
+        .safeParse(request.query);
+      const target = new URL(successUrl);
+      if (!params.success || !query.success) {
+        target.searchParams.set("connector", "error");
+        target.searchParams.set("connector_error", "invalid_response");
+        response.redirect(303, target.toString());
+        return;
+      }
+      try {
+        await service.completeInstallation(
+          params.data.providerId,
+          query.data.installation_id,
+          query.data.state,
+        );
+        target.searchParams.set("connector", "connected");
+        target.searchParams.set("provider", params.data.providerId);
+      } catch (error) {
+        target.searchParams.set("connector", "error");
+        target.searchParams.set(
+          "connector_error",
+          error instanceof Error && "code" in error
+            ? String(error.code)
+            : "installation_failed",
+        );
+      }
+      response.redirect(303, target.toString());
+    },
+  );
+
   router.use("/connectors", authenticate);
 
   router.get("/connectors", async (_request, response) => {

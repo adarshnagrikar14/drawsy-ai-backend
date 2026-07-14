@@ -226,6 +226,25 @@ describe("ConnectorAiExecutor", () => {
           json({ total_count: 1, incomplete_results: false, items: [issue] }),
         );
       }
+      if (path === "/installation/repositories") {
+        return Promise.resolve(
+          json({
+            total_count: 1,
+            repositories: [
+              {
+                id: 1,
+                name: "app",
+                full_name: "drawsy/app",
+                html_url: "https://github.com/drawsy/app",
+                description: "Drawsy app",
+                private: true,
+                default_branch: "main",
+                owner: { login: "drawsy" },
+              },
+            ],
+          }),
+        );
+      }
       if (path === "/repos/drawsy/app/issues/7") {
         return Promise.resolve(json(issue));
       }
@@ -498,31 +517,24 @@ describe("ConnectorAiExecutor", () => {
           }),
         );
       }
-      if (target.pathname === "/user/repos") {
-        return Promise.resolve(
-          json([
-            {
-              id: 1,
-              name: "drawsy",
-              full_name: "adarsh/drawsy",
-              html_url: "https://github.com/adarsh/drawsy",
-              description: "Canvas agent",
-              private: true,
-              visibility: "private",
-              updated_at: "2026-07-14T12:00:00Z",
-              pushed_at: "2026-07-14T12:00:00Z",
-              default_branch: "main",
-              owner: { login: "adarsh" },
-            },
-          ]),
-        );
-      }
-      if (target.pathname === "/search/repositories") {
+      if (target.pathname === "/installation/repositories") {
         return Promise.resolve(
           json({
-            total_count: 1,
-            incomplete_results: false,
-            items: [
+            total_count: 2,
+            repositories: [
+              {
+                id: 1,
+                name: "drawsy",
+                full_name: "adarsh/drawsy",
+                html_url: "https://github.com/adarsh/drawsy",
+                description: "Canvas agent",
+                private: true,
+                visibility: "private",
+                updated_at: "2026-07-14T12:00:00Z",
+                pushed_at: "2026-07-14T12:00:00Z",
+                default_branch: "main",
+                owner: { login: "adarsh" },
+              },
               {
                 id: 2,
                 name: "drawsy-ai-wss",
@@ -557,12 +569,10 @@ describe("ConnectorAiExecutor", () => {
         );
       }
       if (target.pathname === "/repos/adarsh/drawsy/readme") {
-        return Promise.resolve(
-          json({
-            content: Buffer.from("# Drawsy").toString("base64"),
-            encoding: "base64",
-          }),
+        expect(new Headers(init?.headers).get("accept")).toBe(
+          "application/vnd.github.raw+json",
         );
+        return Promise.resolve(new Response("# Drawsy", { status: 200 }));
       }
       throw new Error(`Unexpected provider request: ${target}`);
     });
@@ -723,12 +733,18 @@ describe("ConnectorAiExecutor", () => {
       "1784053800.000000",
     );
     expect(slackHistoryRequest?.searchParams.get("limit")).toBe("15");
-    const repositorySearchRequest = requested.find(
-      (target) => target.pathname === "/search/repositories",
+    const repositoryRequests = requested.filter(
+      (target) => target.pathname === "/installation/repositories",
     );
-    expect(repositorySearchRequest?.searchParams.get("q")).toBe(
-      "drawsy-wss user:adarsh is:private",
-    );
+    expect(repositoryRequests.length).toBeGreaterThanOrEqual(3);
+    expect(
+      repositoryRequests.every((target) => !target.searchParams.has("q")),
+    ).toBe(true);
+    expect(
+      repositoryRequests.every(
+        (target) => target.searchParams.get("per_page") === "10",
+      ),
+    ).toBe(true);
   });
 
   it("rejects provider/capability mismatches before making a network request", async () => {
@@ -777,5 +793,68 @@ describe("ConnectorAiExecutor", () => {
       status: 502,
       code: "connector_output_too_large",
     });
+  });
+
+  it("streams and marks an oversized GitHub README instead of failing", async () => {
+    const repository = {
+      id: 1,
+      name: "drawsy",
+      full_name: "adarsh/drawsy",
+      html_url: "https://github.com/adarsh/drawsy",
+      description: "Canvas agent",
+      private: true,
+      default_branch: "main",
+      owner: { login: "adarsh" },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL) => {
+        const target = new URL(String(input));
+        if (target.pathname === "/installation/repositories") {
+          return Promise.resolve(
+            json({ total_count: 1, repositories: [repository] }),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy") {
+          return Promise.resolve(json(repository));
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/readme") {
+          return Promise.resolve(
+            new Response("# Drawsy\n" + "large readme line\n".repeat(2_000), {
+              status: 200,
+              headers: { "content-length": "36009" },
+            }),
+          );
+        }
+        throw new Error(`Unexpected provider request: ${target}`);
+      }),
+    );
+    const executor = new ConnectorAiExecutor(15_000, 16 * 1024);
+    const listed = await executor.execute("github", "secret", {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capability: "github",
+      operation: "list",
+      kind: "github_repositories",
+    });
+    const resourceId = listed.operation === "list" ? listed.items[0]!.id : "";
+
+    const read = await executor.execute("github", "secret", {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capability: "github",
+      operation: "read",
+      resourceId,
+    });
+
+    expect(read.operation).toBe("read");
+    expect(read.operation === "read" && read.item.content).toContain(
+      "[Content truncated by Drawsy.]",
+    );
+    expect(Buffer.byteLength(JSON.stringify(read), "utf8")).toBeLessThanOrEqual(
+      16 * 1024,
+    );
   });
 });

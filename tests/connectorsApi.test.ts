@@ -135,6 +135,7 @@ const createService = () => {
     attemptId: "attempt-1",
   });
   const completeAuthorization = vi.fn().mockResolvedValue(undefined);
+  const completeInstallation = vi.fn().mockResolvedValue(undefined);
   const failAuthorization = vi.fn().mockResolvedValue(undefined);
   const getAuthorizationStatus = vi
     .fn()
@@ -157,6 +158,7 @@ const createService = () => {
     getOverview,
     getAuthorizationUrl,
     completeAuthorization,
+    completeInstallation,
     failAuthorization,
     getAuthorizationStatus,
     deleteConnection,
@@ -169,6 +171,7 @@ const createService = () => {
     getOverview,
     getAuthorizationUrl,
     completeAuthorization,
+    completeInstallation,
     getAuthorizationStatus,
     deleteConnection,
     createAiGrant,
@@ -256,6 +259,20 @@ describe("Connectors API", () => {
       "code",
       "state",
     );
+  });
+
+  it("completes a public provider installation callback", async () => {
+    const { service, completeInstallation } = createService();
+    const response = await request(appFor(service)).get(
+      "/v1/connectors/github/install/callback?installation_id=42&setup_action=install&state=state",
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers["cross-origin-opener-policy"]).toBe("unsafe-none");
+    expect(response.headers.location).toBe(
+      "http://localhost:3001/connectors-oauth-complete.html?connector=connected&provider=github",
+    );
+    expect(completeInstallation).toHaveBeenCalledWith("github", 42, "state");
   });
 
   it("returns OAuth attempt status only in authenticated user context", async () => {

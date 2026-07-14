@@ -82,7 +82,10 @@ Provider applications must be registered before their cards become available:
   screen, and Google verification for the requested restricted scopes.
 - Notion: public connection with the backend callback URI.
 - Slack: distributed or approved internal app with the documented user scopes.
-- GitHub: GitHub App with installation permissions and user authorization.
+- GitHub: GitHub App with read-only Metadata, Contents, Issues, and Pull
+  requests permissions. Set its Setup URL to
+  `/v1/connectors/github/install/callback`; users choose repository access in
+  GitHub's installation screen.
 
 Use HTTPS callback/success URLs and a deployment secret manager in production.
 Configure Firestore TTL on `deleteAt` for the `connectorOAuthStates` and
@@ -167,7 +170,9 @@ npm start
 - `GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI`: exact backend OAuth callback URL
 - `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URI`: Notion public connection OAuth
 - `SLACK_OAUTH_CLIENT_ID`, `SLACK_OAUTH_CLIENT_SECRET`, `SLACK_OAUTH_REDIRECT_URI`: Slack app OAuth
-- `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`: GitHub App user OAuth
+- `GITHUB_APP_ID`, `GITHUB_APP_SLUG`: public GitHub App identity
+- `GITHUB_APP_PRIVATE_KEY_BASE64`: server-only base64-encoded GitHub App private key
+- `GITHUB_APP_PRIVATE_KEY_PATH`: local or mounted secret-file alternative to the base64 value
 - `CONNECTORS_OAUTH_SUCCESS_URL`: trusted frontend URL after OAuth completes
 - `CONNECTOR_ENCRYPTION_KEY`: optional dedicated base64-encoded 32-byte token key
 - `CONNECTOR_ENCRYPTION_KEY_VERSION`: positive current connector key version

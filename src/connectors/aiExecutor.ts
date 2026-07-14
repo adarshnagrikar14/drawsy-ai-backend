@@ -18,7 +18,9 @@ const NOTION_API = "https://api.notion.com";
 const SLACK_API = "https://slack.com";
 const GITHUB_API = "https://api.github.com";
 const NOTION_VERSION = "2026-03-11";
-const GITHUB_VERSION = "2022-11-28";
+const GITHUB_VERSION = "2026-03-10";
+const GITHUB_REPOSITORY_PAGE_SIZE = 10;
+const TRUNCATED_SOURCE_MARKER = "\n\n[Content truncated by Drawsy.]";
 const ALLOWED_PROVIDER_HOSTS = new Set([
   "gmail.googleapis.com",
   "www.googleapis.com",
@@ -286,16 +288,9 @@ const githubRepositorySchema = z
     owner: z.object({ login: z.string().min(1) }).optional(),
   })
   .passthrough();
-const githubRepositoryListSchema = z.array(githubRepositorySchema);
-const githubRepositorySearchSchema = z.object({
+const githubInstallationRepositoriesSchema = z.object({
   total_count: z.number().int().nonnegative(),
-  incomplete_results: z.boolean(),
-  items: z.array(githubRepositorySchema),
-});
-const githubReadmeSchema = z.object({
-  content: z.string(),
-  encoding: z.literal("base64"),
-  html_url: z.string().url().optional(),
+  repositories: z.array(githubRepositorySchema),
 });
 const githubIssueSchema = z
   .object({
@@ -1352,9 +1347,23 @@ export class ConnectorAiExecutor {
       this.githubHeaders(accessToken),
       githubSearchSchema,
     );
-    const items = result.items.map((value) =>
-      this.githubItem(githubIssueSchema.parse(value), null),
-    );
+    const installedRepositories =
+      await this.githubInstallationRepositoryNames(accessToken);
+    const items = result.items
+      .map((value) => githubIssueSchema.parse(value))
+      .filter((issue) => {
+        if (!issue.repository_url) return false;
+        const match = new URL(issue.repository_url).pathname.match(
+          /^\/repos\/([^/]+)\/([^/]+)$/,
+        );
+        return Boolean(
+          match &&
+          installedRepositories.has(
+            `${decodeURIComponent(match[1]!)}/${decodeURIComponent(match[2]!)}`.toLowerCase(),
+          ),
+        );
+      })
+      .map((issue) => this.githubItem(issue, null));
     return {
       operation: "search" as const,
       capability: "github" as const,
@@ -1378,61 +1387,37 @@ export class ConnectorAiExecutor {
       throw this.invalidCursor();
     }
     const limit = request.limit || 30;
-    if (request.query) {
-      const target = new URL("/search/repositories", GITHUB_API);
-      const qualifiers = [request.query];
-      if (request.owner) qualifiers.push(`user:${request.owner}`);
-      if (request.visibility && request.visibility !== "all") {
-        qualifiers.push(`is:${request.visibility}`);
-      }
-      target.searchParams.set("q", qualifiers.join(" "));
-      target.searchParams.set("sort", "updated");
-      target.searchParams.set("order", "desc");
-      target.searchParams.set("per_page", String(limit));
-      target.searchParams.set("page", String(page));
-      const result = await this.json(
-        target,
-        this.githubHeaders(accessToken),
-        githubRepositorySearchSchema,
+    const pageSize = Math.min(limit, GITHUB_REPOSITORY_PAGE_SIZE);
+    let currentPage = page;
+    let hasMore = false;
+    const matched: z.infer<typeof githubRepositorySchema>[] = [];
+    do {
+      const result = await this.listGitHubInstallationPage(
+        accessToken,
+        currentPage,
+        pageSize,
       );
-      return {
-        operation: "list" as const,
-        capability: "github" as const,
-        kind: "github_repositories" as const,
-        items: result.items.map((repository) =>
-          this.githubRepositoryItem(repository, null),
-        ),
-        nextCursor:
-          page * limit < result.total_count && page < 100
-            ? String(page + 1)
-            : null,
-      };
-    }
-    const target = new URL(
-      request.owner
-        ? `/users/${encodeURIComponent(request.owner)}/repos`
-        : "/user/repos",
-      GITHUB_API,
-    );
-    target.searchParams.set("sort", "updated");
-    target.searchParams.set("direction", "desc");
-    target.searchParams.set("per_page", String(limit));
-    target.searchParams.set("page", String(page));
-    if (request.owner) {
-      target.searchParams.set("type", "owner");
-    } else {
-      target.searchParams.set(
-        "affiliation",
-        "owner,collaborator,organization_member",
+      matched.push(
+        ...result.repositories.filter((repository) => {
+          const owner = repository.full_name.split("/")[0] || "";
+          return (
+            (!request.query ||
+              this.githubRepositoryMatchesQuery(repository, request.query)) &&
+            (!request.owner ||
+              owner.toLowerCase() === request.owner.toLowerCase()) &&
+            (!request.visibility ||
+              request.visibility === "all" ||
+              (request.visibility === "private") === repository.private)
+          );
+        }),
       );
-      target.searchParams.set("visibility", request.visibility || "all");
-    }
-    const repositories = await this.json(
-      target,
-      this.githubHeaders(accessToken),
-      githubRepositoryListSchema,
-    );
-    const items = repositories.map((repository) =>
+      hasMore =
+        result.repositories.length === pageSize &&
+        currentPage * pageSize < result.total_count &&
+        currentPage < 100;
+      currentPage += 1;
+    } while (matched.length === 0 && hasMore);
+    const items = matched.map((repository) =>
       this.githubRepositoryItem(repository, null),
     );
     return {
@@ -1440,14 +1425,14 @@ export class ConnectorAiExecutor {
       capability: "github" as const,
       kind: "github_repositories" as const,
       items,
-      nextCursor:
-        repositories.length === limit && page < 100 ? String(page + 1) : null,
+      nextCursor: hasMore ? String(currentPage) : null,
     };
   }
 
   private async readGitHub(accessToken: string, resource: ResourceId) {
     if (resource.type === "repository") {
       const repository = this.githubRepositoryName(resource.id);
+      await this.assertGitHubRepositoryAccess(accessToken, repository);
       const target = new URL(
         `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}`,
         GITHUB_API,
@@ -1459,18 +1444,14 @@ export class ConnectorAiExecutor {
       );
       let readme: string | null = null;
       try {
-        const response = await this.json(
+        readme = await this.text(
           new URL(
             `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/readme`,
             GITHUB_API,
           ),
-          this.githubHeaders(accessToken),
-          githubReadmeSchema,
+          this.githubHeaders(accessToken, "application/vnd.github.raw+json"),
+          true,
         );
-        readme = Buffer.from(
-          response.content.replace(/\s+/g, ""),
-          "base64",
-        ).toString("utf8");
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
       }
@@ -1494,6 +1475,10 @@ export class ConnectorAiExecutor {
       `/repos/${encodeURIComponent(repository[0]!)}/${encodeURIComponent(repository[1]!)}/issues/${resource.number}`,
       GITHUB_API,
     );
+    await this.assertGitHubRepositoryAccess(accessToken, [
+      repository[0]!,
+      repository[1]!,
+    ]);
     const issue = await this.json(
       target,
       this.githubHeaders(accessToken),
@@ -1535,6 +1520,69 @@ export class ConnectorAiExecutor {
         stars: repository.stargazers_count || 0,
       },
     });
+  }
+
+  private githubRepositoryMatchesQuery(
+    repository: z.infer<typeof githubRepositorySchema>,
+    query: string,
+  ) {
+    const searchable =
+      `${repository.full_name} ${repository.description || ""}`.toLowerCase();
+    const terms = query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    return terms.length > 0 && terms.every((term) => searchable.includes(term));
+  }
+
+  private async listGitHubInstallationPage(
+    accessToken: string,
+    page: number,
+    limit: number,
+  ) {
+    const target = new URL("/installation/repositories", GITHUB_API);
+    target.searchParams.set("per_page", String(limit));
+    target.searchParams.set("page", String(page));
+    return this.json(
+      target,
+      this.githubHeaders(accessToken),
+      githubInstallationRepositoriesSchema,
+    );
+  }
+
+  private async githubInstallationRepositoryNames(accessToken: string) {
+    const repositories = new Set<string>();
+    for (let page = 1; ; page += 1) {
+      const result = await this.listGitHubInstallationPage(
+        accessToken,
+        page,
+        GITHUB_REPOSITORY_PAGE_SIZE,
+      );
+      result.repositories.forEach((repository) =>
+        repositories.add(repository.full_name.toLowerCase()),
+      );
+      if (
+        result.repositories.length < GITHUB_REPOSITORY_PAGE_SIZE ||
+        page * GITHUB_REPOSITORY_PAGE_SIZE >= result.total_count
+      ) {
+        break;
+      }
+    }
+    return repositories;
+  }
+
+  private async assertGitHubRepositoryAccess(
+    accessToken: string,
+    repository: [string, string],
+  ) {
+    const installed = await this.githubInstallationRepositoryNames(accessToken);
+    if (!installed.has(`${repository[0]}/${repository[1]}`.toLowerCase())) {
+      throw new ApiError(
+        403,
+        "connector_resource_forbidden",
+        "That repository is not selected for this GitHub connection.",
+      );
+    }
   }
 
   private githubRepositoryName(value: string): [string, string] {
@@ -1600,11 +1648,19 @@ export class ConnectorAiExecutor {
     }
   }
 
-  private text(target: URL, init: RequestInit) {
-    return this.request(target, init);
+  private text(
+    target: URL,
+    init: RequestInit,
+    truncateOversizedResponse = false,
+  ) {
+    return this.request(target, init, truncateOversizedResponse);
   }
 
-  private async request(target: URL, init: RequestInit) {
+  private async request(
+    target: URL,
+    init: RequestInit,
+    truncateOversizedResponse = false,
+  ) {
     if (
       target.protocol !== "https:" ||
       !ALLOWED_PROVIDER_HOSTS.has(target.hostname)
@@ -1666,7 +1722,11 @@ export class ConnectorAiExecutor {
       throw new ApiError(status, code, message);
     }
     const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > this.maxOutputBytes) {
+    if (
+      !truncateOversizedResponse &&
+      Number.isFinite(contentLength) &&
+      contentLength > this.maxOutputBytes
+    ) {
       throw this.outputTooLarge();
     }
     if (!response.body) return "";
@@ -1679,6 +1739,17 @@ export class ConnectorAiExecutor {
       total += value.byteLength;
       if (total > this.maxOutputBytes) {
         await reader.cancel();
+        if (truncateOversizedResponse) {
+          const combined = Buffer.concat([...chunks, value]);
+          return `${this.truncate(
+            combined.toString("utf8"),
+            Math.max(
+              0,
+              this.maxOutputBytes -
+                Buffer.byteLength(TRUNCATED_SOURCE_MARKER, "utf8"),
+            ),
+          )}${TRUNCATED_SOURCE_MARKER}`;
+        }
         throw this.outputTooLarge();
       }
       chunks.push(value);
@@ -1711,16 +1782,24 @@ export class ConnectorAiExecutor {
     } else if (
       Buffer.byteLength(JSON.stringify(result), "utf8") > this.maxOutputBytes
     ) {
-      const overhead = Buffer.byteLength(
-        JSON.stringify({ ...result, item: { ...result.item, content: "" } }),
-        "utf8",
-      );
-      result.item.content = result.item.content
-        ? this.truncate(
-            result.item.content,
-            Math.max(0, this.maxOutputBytes - overhead),
-          )
-        : null;
+      const content = result.item.content;
+      if (content) {
+        let low = 0;
+        let high = Buffer.byteLength(content, "utf8");
+        while (low < high) {
+          const middle = Math.ceil((low + high) / 2);
+          result.item.content = this.truncateSourceContent(content, middle);
+          if (
+            Buffer.byteLength(JSON.stringify(result), "utf8") <=
+            this.maxOutputBytes
+          ) {
+            low = middle;
+          } else {
+            high = middle - 1;
+          }
+        }
+        result.item.content = this.truncateSourceContent(content, low);
+      }
     }
     if (
       Buffer.byteLength(JSON.stringify(result), "utf8") > this.maxOutputBytes
@@ -1809,10 +1888,13 @@ export class ConnectorAiExecutor {
     };
   }
 
-  private githubHeaders(accessToken: string): RequestInit {
+  private githubHeaders(
+    accessToken: string,
+    accept = "application/vnd.github+json",
+  ): RequestInit {
     return {
       headers: {
-        Accept: "application/vnd.github+json",
+        Accept: accept,
         Authorization: `Bearer ${accessToken}`,
         "X-GitHub-Api-Version": GITHUB_VERSION,
       },
@@ -2051,6 +2133,20 @@ export class ConnectorAiExecutor {
       else high = middle - 1;
     }
     return value.slice(0, low);
+  }
+
+  private truncateSourceContent(value: string, maxBytes: number) {
+    if (!value.endsWith(TRUNCATED_SOURCE_MARKER)) {
+      return this.truncate(value, maxBytes);
+    }
+    const markerBytes = Buffer.byteLength(TRUNCATED_SOURCE_MARKER, "utf8");
+    if (maxBytes <= markerBytes) {
+      return this.truncate(TRUNCATED_SOURCE_MARKER, maxBytes);
+    }
+    return `${this.truncate(
+      value.slice(0, -TRUNCATED_SOURCE_MARKER.length),
+      maxBytes - markerBytes,
+    )}${TRUNCATED_SOURCE_MARKER}`;
   }
 
   private invalidResource() {
