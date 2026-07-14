@@ -69,16 +69,97 @@ export type ConnectorAiExecutionRequest = {
   sessionId: string;
   turnId: string;
   connectionId: string;
-  capability: ConnectorCapability;
 } & (
   | {
       operation: "search";
+      capability: ConnectorCapability;
       query: string;
       cursor?: string;
       limit?: number;
     }
   | {
+      operation: "list";
+      capability: "mail";
+      kind: "mail_messages";
+      query?: string;
+      after?: string;
+      before?: string;
+      from?: string;
+      to?: string;
+      subject?: string;
+      label?: string;
+      includeSpamTrash?: boolean;
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "calendar";
+      kind: "calendars";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "calendar";
+      kind: "calendar_events";
+      calendarId?: string;
+      startTime: string;
+      endTime: string;
+      timeZone?: string;
+      query?: string;
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "drive";
+      kind: "drive_files";
+      query?: string;
+      mimeType?: string;
+      orderBy?: "modifiedTime desc" | "createdTime desc" | "name";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "notion";
+      kind: "notion_content";
+      query?: string;
+      object?: "page" | "data_source";
+      sortDirection?: "ascending" | "descending";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "github";
+      kind: "github_repositories";
+      owner?: string;
+      visibility?: "all" | "public" | "private";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "slack";
+      kind: "slack_channels";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "slack";
+      kind: "slack_messages";
+      channelId: string;
+      startTime?: string;
+      endTime?: string;
+      cursor?: string;
+      limit?: number;
+    }
+  | {
       operation: "read";
+      capability: ConnectorCapability;
       resourceId: string;
     }
 );
@@ -100,6 +181,21 @@ export type ConnectorAiExecutionResult =
   | {
       operation: "search";
       capability: ConnectorCapability;
+      items: ConnectorAiItem[];
+      nextCursor: string | null;
+    }
+  | {
+      operation: "list";
+      capability: ConnectorCapability;
+      kind:
+        | "mail_messages"
+        | "calendars"
+        | "calendar_events"
+        | "drive_files"
+        | "notion_content"
+        | "github_repositories"
+        | "slack_channels"
+        | "slack_messages";
       items: ConnectorAiItem[];
       nextCursor: string | null;
     }

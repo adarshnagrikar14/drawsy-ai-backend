@@ -44,7 +44,7 @@ the Excalidraw editor core.
 - `GET /v1/connectors/:providerId/oauth/callback` - public OAuth callback
 - `DELETE /v1/connectors/connections/:connectionId` - revokes and removes access
 - `POST /v1/connectors/ai/grants` - mints a short-lived, user-authenticated connector grant for one local AI turn
-- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only `search` or `read` against a connected provider
+- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only keyword `search`, provider-aware `list`, or item `read` against a connected provider
 
 The connector control plane owns OAuth, encrypted credentials, account-scoped
 permissions, refresh, and revocation for Google Workspace, Notion, Slack, and
@@ -69,10 +69,11 @@ The returned grant is valid only for that authenticated user, local session,
 turn, connection, and capability allowlist. The MCP process supplies it as the
 Bearer token to `/v1/connectors/ai/execute`, repeating the exact session, turn,
 connection, and one allowed capability in the body. Execution accepts either a
-bounded `search` request (`query`, optional `cursor` and `limit`) or a `read`
-request using an opaque `resourceId` returned by search. Results share one
+bounded keyword `search`, typed provider `list`, or opaque-resource `read`
+request using an opaque `resourceId` returned by search or list. Results share one
 normalized item envelope across Mail, Calendar, Drive, Notion, Slack, and
-GitHub. Grants expire by default after two minutes; provider calls use fixed
+GitHub. Grants expire by default after ten minutes and are dropped by the local
+bridge when the turn ends; provider calls use fixed
 HTTPS hosts, timeouts, strict response validation, and an output byte ceiling.
 
 Provider applications must be registered before their cards become available:
@@ -173,7 +174,7 @@ npm start
 - `CONNECTOR_ENCRYPTION_PREVIOUS_KEYS`: comma-separated `version:base64-key` rotation entries
 - `CONNECTOR_OAUTH_STATE_TTL_SECONDS`: one-use connector OAuth state lifetime
 - `CONNECTOR_HTTP_TIMEOUT_MS`: connector provider request timeout
-- `CONNECTOR_AI_GRANT_TTL_SECONDS`: signed AI connector grant lifetime, 30–300 seconds (default `120`)
+- `CONNECTOR_AI_GRANT_TTL_SECONDS`: signed AI connector grant lifetime, 30–1800 seconds (default `600`); the local bridge still invalidates access as soon as the turn ends
 - `CONNECTOR_AI_MAX_OUTPUT_BYTES`: maximum provider response and normalized execution payload, 16 KiB–1 MiB (default `262144`)
 - `KANBAN_ENCRYPTION_KEY`: current base64-encoded 32-byte wrapping key; defaults to the workspace key for local compatibility
 - `KANBAN_ENCRYPTION_KEY_VERSION`: positive current key version

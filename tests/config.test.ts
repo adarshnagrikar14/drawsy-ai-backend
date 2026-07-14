@@ -61,7 +61,7 @@ describe("loadConfig", () => {
         encryptionKeyVersion: 1,
         stateTtlMs: 600_000,
         httpTimeoutMs: 15_000,
-        aiGrantTtlMs: 120_000,
+        aiGrantTtlMs: 600_000,
         aiMaxOutputBytes: 256 * 1024,
       },
     });
@@ -135,7 +135,7 @@ describe("loadConfig", () => {
       encryptionKeyVersion: 1,
       stateTtlMs: 600_000,
       httpTimeoutMs: 15_000,
-      aiGrantTtlMs: 120_000,
+      aiGrantTtlMs: 600_000,
       aiMaxOutputBytes: 256 * 1024,
     });
   });

@@ -197,8 +197,8 @@ const environmentSchema = z.object({
     .number()
     .int()
     .min(30)
-    .max(300)
-    .default(120),
+    .max(1800)
+    .default(600),
   CONNECTOR_AI_MAX_OUTPUT_BYTES: z.coerce
     .number()
     .int()
