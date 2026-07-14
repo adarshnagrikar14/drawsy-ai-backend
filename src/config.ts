@@ -1,3 +1,6 @@
+import { createPrivateKey } from "node:crypto";
+import { readFileSync } from "node:fs";
+
 import { z } from "zod";
 
 const optionalText = z.preprocess(
@@ -153,9 +156,10 @@ const environmentSchema = z.object({
   SLACK_OAUTH_CLIENT_ID: optionalText,
   SLACK_OAUTH_CLIENT_SECRET: optionalText,
   SLACK_OAUTH_REDIRECT_URI: optionalUrl,
-  GITHUB_OAUTH_CLIENT_ID: optionalText,
-  GITHUB_OAUTH_CLIENT_SECRET: optionalText,
-  GITHUB_OAUTH_REDIRECT_URI: optionalUrl,
+  GITHUB_APP_ID: z.coerce.number().int().positive().optional(),
+  GITHUB_APP_SLUG: optionalText,
+  GITHUB_APP_PRIVATE_KEY_BASE64: optionalText,
+  GITHUB_APP_PRIVATE_KEY_PATH: optionalText,
   CONNECTORS_OAUTH_SUCCESS_URL: optionalUrl,
   CONNECTOR_ENCRYPTION_KEY: z
     .string()
@@ -252,7 +256,7 @@ export type AppConfig = {
     };
     notion?: { clientId: string; clientSecret: string; redirectUri: string };
     slack?: { clientId: string; clientSecret: string; redirectUri: string };
-    github?: { clientId: string; clientSecret: string; redirectUri: string };
+    github?: { appId: number; appSlug: string; privateKey: string };
     successUrl: string;
     encryptionKeys: ReadonlyMap<number, Buffer>;
     encryptionKeyVersion: number;
@@ -348,11 +352,6 @@ export const loadConfig = (
     parsed.data.SLACK_OAUTH_CLIENT_SECRET,
     parsed.data.SLACK_OAUTH_REDIRECT_URI,
   ];
-  const githubOAuthValues = [
-    parsed.data.GITHUB_OAUTH_CLIENT_ID,
-    parsed.data.GITHUB_OAUTH_CLIENT_SECRET,
-    parsed.data.GITHUB_OAUTH_REDIRECT_URI,
-  ];
   const validateProviderOAuth = (name: string, values: unknown[]) => {
     if (values.some(Boolean) && !values.every(Boolean)) {
       throw new Error(
@@ -367,12 +366,44 @@ export const loadConfig = (
   );
   const hasNotionOAuth = validateProviderOAuth("Notion", notionOAuthValues);
   const hasSlackOAuth = validateProviderOAuth("Slack", slackOAuthValues);
-  const hasGithubOAuth = validateProviderOAuth("GitHub", githubOAuthValues);
+  const githubPrivateKeySources = [
+    parsed.data.GITHUB_APP_PRIVATE_KEY_BASE64,
+    parsed.data.GITHUB_APP_PRIVATE_KEY_PATH,
+  ].filter(Boolean);
+  const hasAnyGithubAppValue = Boolean(
+    parsed.data.GITHUB_APP_ID ||
+    parsed.data.GITHUB_APP_SLUG ||
+    githubPrivateKeySources.length,
+  );
+  if (
+    hasAnyGithubAppValue &&
+    (!parsed.data.GITHUB_APP_ID ||
+      !parsed.data.GITHUB_APP_SLUG ||
+      githubPrivateKeySources.length !== 1)
+  ) {
+    throw new Error(
+      "Invalid environment configuration: GITHUB_APP_ID, GITHUB_APP_SLUG, and exactly one GitHub App private key source are required together",
+    );
+  }
+  const hasGithubApp = hasAnyGithubAppValue;
+  let githubPrivateKey: string | undefined;
+  if (hasGithubApp) {
+    try {
+      githubPrivateKey = parsed.data.GITHUB_APP_PRIVATE_KEY_BASE64
+        ? Buffer.from(
+            parsed.data.GITHUB_APP_PRIVATE_KEY_BASE64,
+            "base64",
+          ).toString("utf8")
+        : readFileSync(parsed.data.GITHUB_APP_PRIVATE_KEY_PATH!, "utf8");
+      createPrivateKey(githubPrivateKey);
+    } catch {
+      throw new Error(
+        "Invalid environment configuration: GitHub App private key is unreadable or invalid",
+      );
+    }
+  }
   const hasAnyConnectorProvider =
-    hasGoogleWorkspaceOAuth ||
-    hasNotionOAuth ||
-    hasSlackOAuth ||
-    hasGithubOAuth;
+    hasGoogleWorkspaceOAuth || hasNotionOAuth || hasSlackOAuth || hasGithubApp;
   if (
     hasAnyConnectorProvider &&
     parsed.data.NODE_ENV === "production" &&
@@ -388,7 +419,6 @@ export const loadConfig = (
       parsed.data.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI,
       parsed.data.NOTION_OAUTH_REDIRECT_URI,
       parsed.data.SLACK_OAUTH_REDIRECT_URI,
-      parsed.data.GITHUB_OAUTH_REDIRECT_URI,
     ].filter((value): value is string => Boolean(value));
     if (oauthUrls.some((value) => new URL(value).protocol !== "https:")) {
       throw new Error(
@@ -493,11 +523,11 @@ export const loadConfig = (
             redirectUri: parsed.data.SLACK_OAUTH_REDIRECT_URI!,
           }
         : undefined,
-      github: hasGithubOAuth
+      github: hasGithubApp
         ? {
-            clientId: parsed.data.GITHUB_OAUTH_CLIENT_ID!,
-            clientSecret: parsed.data.GITHUB_OAUTH_CLIENT_SECRET!,
-            redirectUri: parsed.data.GITHUB_OAUTH_REDIRECT_URI!,
+            appId: parsed.data.GITHUB_APP_ID!,
+            appSlug: parsed.data.GITHUB_APP_SLUG!,
+            privateKey: githubPrivateKey!,
           }
         : undefined,
       successUrl:

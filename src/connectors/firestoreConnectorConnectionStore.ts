@@ -147,6 +147,7 @@ export class FirestoreConnectorConnectionStore implements ConnectorConnectionSto
         accountName: connection.accountName,
         accountEmail: connection.accountEmail,
         accountAvatarUrl: connection.accountAvatarUrl,
+        manageUrl: connection.manageUrl || null,
         capabilities: connection.capabilities,
         scopes: connection.scopes,
         createdAt: connection.createdAt,

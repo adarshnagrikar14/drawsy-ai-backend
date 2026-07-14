@@ -28,6 +28,7 @@ export type ConnectorConnection = {
   accountName: string;
   accountEmail: string | null;
   accountAvatarUrl: string | null;
+  manageUrl: string | null;
   capabilities: ConnectorCapability[];
   scopes: string[];
   createdAt: number;
@@ -39,6 +40,19 @@ export type ConnectorTokens = {
   refreshToken: string | null;
   expiresAt: number | null;
   scopes: string[];
+  installationId?: number;
+};
+
+export type ConnectorAuthorizationResult = {
+  account: {
+    id: string;
+    name: string;
+    email: string | null;
+    avatarUrl: string | null;
+    manageUrl?: string | null;
+  };
+  tokens: ConnectorTokens;
+  capabilities: readonly ConnectorCapability[];
 };
 
 export type EncryptedConnectorTokens = {
@@ -241,19 +255,13 @@ export interface ConnectorProvider {
   readonly summary: ConnectorProviderDefinition;
   readonly supportsPkce: boolean;
   getAuthorizationUrl(state: string, codeChallenge?: string): string;
-  exchangeAuthorizationCode(
+  exchangeAuthorizationCode?(
     code: string,
     codeVerifier?: string,
-  ): Promise<{
-    account: {
-      id: string;
-      name: string;
-      email: string | null;
-      avatarUrl: string | null;
-    };
-    tokens: ConnectorTokens;
-    capabilities: readonly ConnectorCapability[];
-  }>;
+  ): Promise<ConnectorAuthorizationResult>;
+  completeInstallation?(
+    installationId: number,
+  ): Promise<ConnectorAuthorizationResult>;
   refresh(tokens: ConnectorTokens): Promise<ConnectorTokens>;
   revoke(tokens: ConnectorTokens): Promise<void>;
 }
@@ -270,6 +278,11 @@ export interface ConnectorService {
   completeAuthorization(
     providerId: ConnectorProviderId,
     code: string,
+    state: string,
+  ): Promise<void>;
+  completeInstallation(
+    providerId: ConnectorProviderId,
+    installationId: number,
     state: string,
   ): Promise<void>;
   failAuthorization(

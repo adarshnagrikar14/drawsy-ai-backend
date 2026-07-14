@@ -98,6 +98,7 @@ const encryptedConnection = (
     accountName: "Account",
     accountEmail: "account@example.com",
     accountAvatarUrl: null,
+    manageUrl: null,
     capabilities,
     scopes: value.scopes,
     createdAt: 1,
@@ -127,6 +128,31 @@ describe("DefaultConnectorService", () => {
       { id: "github", configured: false },
     ]);
     expect(listConnections).toHaveBeenCalledWith("user-1");
+  });
+
+  it("does not expose legacy GitHub OAuth connections", async () => {
+    const listConnections = vi.fn().mockResolvedValue([
+      {
+        id: "legacy-github",
+        providerId: "github",
+        accountId: "account-1",
+        accountName: "adarsh",
+        accountEmail: null,
+        accountAvatarUrl: null,
+        manageUrl: null,
+        capabilities: ["github"],
+        scopes: ["repo"],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    const service = new DefaultConnectorService(
+      config,
+      [provider()],
+      store({ listConnections }),
+    );
+
+    expect((await service.getOverview("user-1")).connections).toEqual([]);
   });
 
   it("rejects OAuth start for an unconfigured catalog provider", async () => {
@@ -174,6 +200,56 @@ describe("DefaultConnectorService", () => {
     expect(exchangeAuthorizationCode).toHaveBeenCalledWith("code", "verifier");
     expect(setOAuthAttemptStatus).toHaveBeenCalledWith("attempt-1", {
       status: "connected",
+    });
+  });
+
+  it("persists a provider-managed installation", async () => {
+    const completeInstallation = vi.fn().mockResolvedValue({
+      account: {
+        id: "account-1",
+        name: "adarsh",
+        email: null,
+        avatarUrl: null,
+        manageUrl: "https://github.com/settings/installations/42",
+      },
+      tokens: tokens({
+        refreshToken: null,
+        installationId: 42,
+        scopes: ["contents:read"],
+      }),
+      capabilities: ["github"],
+    });
+    const saveConnection = vi
+      .fn<ConnectorConnectionStore["saveConnection"]>()
+      .mockResolvedValue(undefined);
+    const connectionStore = store({ saveConnection });
+    const service = new DefaultConnectorService(
+      config,
+      [
+        provider({
+          summary: {
+            id: "github",
+            name: "GitHub",
+            capabilities: ["github"],
+            executionMode: "provider_api",
+            availability: "stable",
+          },
+          supportsPkce: false,
+          exchangeAuthorizationCode: undefined,
+          completeInstallation,
+        }),
+      ],
+      connectionStore,
+    );
+
+    await service.completeInstallation("github", 42, "state");
+
+    expect(completeInstallation).toHaveBeenCalledWith(42);
+    expect(saveConnection.mock.calls[0]?.[1]).toMatchObject({
+      providerId: "github",
+      accountName: "adarsh",
+      manageUrl: "https://github.com/settings/installations/42",
+      capabilities: ["github"],
     });
   });
 

@@ -1,6 +1,14 @@
+import { generateKeyPairSync } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
+
+const githubPrivateKey = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+})
+  .privateKey.export({ type: "pkcs8", format: "pem" })
+  .toString();
 
 describe("loadConfig", () => {
   it("normalizes runtime configuration", () => {
@@ -154,6 +162,41 @@ describe("loadConfig", () => {
     ).toThrow("all Google Workspace connector OAuth values");
   });
 
+  it("configures a GitHub App installation connector", () => {
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      GITHUB_APP_ID: "4298788",
+      GITHUB_APP_SLUG: "drawsy-ai-connector",
+      GITHUB_APP_PRIVATE_KEY_BASE64:
+        Buffer.from(githubPrivateKey).toString("base64"),
+    });
+
+    expect(config.connectors?.github).toEqual({
+      appId: 4_298_788,
+      appSlug: "drawsy-ai-connector",
+      privateKey: githubPrivateKey,
+    });
+  });
+
+  it("rejects partial GitHub App configuration", () => {
+    expect(() =>
+      loadConfig({
+        FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+        R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+        R2_BUCKET_NAME: "drawsy",
+        R2_ACCESS_KEY_ID: "key",
+        R2_SECRET_ACCESS_KEY: "secret",
+        WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        GITHUB_APP_ID: "4298788",
+      }),
+    ).toThrow("GITHUB_APP_ID");
+  });
+
   it("rejects insecure connector OAuth URLs in production", () => {
     expect(() =>
       loadConfig({
@@ -164,10 +207,10 @@ describe("loadConfig", () => {
         R2_ACCESS_KEY_ID: "key",
         R2_SECRET_ACCESS_KEY: "secret",
         WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
-        GITHUB_OAUTH_CLIENT_ID: "github-client",
-        GITHUB_OAUTH_CLIENT_SECRET: "github-secret",
-        GITHUB_OAUTH_REDIRECT_URI:
-          "http://drawsy.example/v1/connectors/github/oauth/callback",
+        GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: "google-client",
+        GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: "google-secret",
+        GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI:
+          "http://drawsy.example/v1/connectors/google-workspace/oauth/callback",
         CONNECTORS_OAUTH_SUCCESS_URL:
           "https://drawsy.example/connectors-oauth-complete.html",
       }),
