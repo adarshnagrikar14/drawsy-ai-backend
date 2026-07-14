@@ -170,6 +170,7 @@ export const connectorAiExecutionRequestSchema = z.union([
       operation: z.literal("list"),
       capability: z.literal("github"),
       kind: z.literal("github_repositories"),
+      query: z.string().trim().min(1).max(256).optional(),
       owner: z
         .string()
         .trim()

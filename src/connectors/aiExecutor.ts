@@ -287,6 +287,11 @@ const githubRepositorySchema = z
   })
   .passthrough();
 const githubRepositoryListSchema = z.array(githubRepositorySchema);
+const githubRepositorySearchSchema = z.object({
+  total_count: z.number().int().nonnegative(),
+  incomplete_results: z.boolean(),
+  items: z.array(githubRepositorySchema),
+});
 const githubReadmeSchema = z.object({
   content: z.string(),
   encoding: z.literal("base64"),
@@ -1373,6 +1378,36 @@ export class ConnectorAiExecutor {
       throw this.invalidCursor();
     }
     const limit = request.limit || 30;
+    if (request.query) {
+      const target = new URL("/search/repositories", GITHUB_API);
+      const qualifiers = [request.query];
+      if (request.owner) qualifiers.push(`user:${request.owner}`);
+      if (request.visibility && request.visibility !== "all") {
+        qualifiers.push(`is:${request.visibility}`);
+      }
+      target.searchParams.set("q", qualifiers.join(" "));
+      target.searchParams.set("sort", "updated");
+      target.searchParams.set("order", "desc");
+      target.searchParams.set("per_page", String(limit));
+      target.searchParams.set("page", String(page));
+      const result = await this.json(
+        target,
+        this.githubHeaders(accessToken),
+        githubRepositorySearchSchema,
+      );
+      return {
+        operation: "list" as const,
+        capability: "github" as const,
+        kind: "github_repositories" as const,
+        items: result.items.map((repository) =>
+          this.githubRepositoryItem(repository, null),
+        ),
+        nextCursor:
+          page * limit < result.total_count && page < 100
+            ? String(page + 1)
+            : null,
+      };
+    }
     const target = new URL(
       request.owner
         ? `/users/${encodeURIComponent(request.owner)}/repos`

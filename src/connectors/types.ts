@@ -135,6 +135,7 @@ export type ConnectorAiExecutionRequest = {
       operation: "list";
       capability: "github";
       kind: "github_repositories";
+      query?: string;
       owner?: string;
       visibility?: "all" | "public" | "private";
       cursor?: string;

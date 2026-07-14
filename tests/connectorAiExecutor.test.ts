@@ -517,6 +517,29 @@ describe("ConnectorAiExecutor", () => {
           ]),
         );
       }
+      if (target.pathname === "/search/repositories") {
+        return Promise.resolve(
+          json({
+            total_count: 1,
+            incomplete_results: false,
+            items: [
+              {
+                id: 2,
+                name: "drawsy-ai-wss",
+                full_name: "adarsh/drawsy-ai-wss",
+                html_url: "https://github.com/adarsh/drawsy-ai-wss",
+                description: "Drawsy collaboration server",
+                private: true,
+                visibility: "private",
+                updated_at: "2026-07-14T13:00:00Z",
+                pushed_at: "2026-07-14T13:00:00Z",
+                default_branch: "main",
+                owner: { login: "adarsh" },
+              },
+            ],
+          }),
+        );
+      }
       if (target.pathname === "/repos/adarsh/drawsy") {
         return Promise.resolve(
           json({
@@ -621,6 +644,19 @@ describe("ConnectorAiExecutor", () => {
       kind: "github_repositories",
       visibility: "all",
     });
+    const searchedRepositories = await executor.execute("github", "secret", {
+      ...context,
+      operation: "list",
+      capability: "github",
+      kind: "github_repositories",
+      query: "drawsy-wss",
+      owner: "adarsh",
+      visibility: "private",
+    });
+    expect(
+      searchedRepositories.operation === "list" &&
+        searchedRepositories.items[0]?.title,
+    ).toBe("adarsh/drawsy-ai-wss");
     const repository =
       repositories.operation === "list" ? repositories.items[0] : undefined;
     const repositoryRead = await executor.execute("github", "secret", {
@@ -687,6 +723,12 @@ describe("ConnectorAiExecutor", () => {
       "1784053800.000000",
     );
     expect(slackHistoryRequest?.searchParams.get("limit")).toBe("15");
+    const repositorySearchRequest = requested.find(
+      (target) => target.pathname === "/search/repositories",
+    );
+    expect(repositorySearchRequest?.searchParams.get("q")).toBe(
+      "drawsy-wss user:adarsh is:private",
+    );
   });
 
   it("rejects provider/capability mismatches before making a network request", async () => {
