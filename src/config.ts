@@ -193,6 +193,18 @@ const environmentSchema = z.object({
     .min(1000)
     .max(60_000)
     .default(15_000),
+  CONNECTOR_AI_GRANT_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
+    .max(300)
+    .default(120),
+  CONNECTOR_AI_MAX_OUTPUT_BYTES: z.coerce
+    .number()
+    .int()
+    .min(16 * 1024)
+    .max(1024 * 1024)
+    .default(256 * 1024),
 });
 
 export type AppConfig = {
@@ -246,6 +258,8 @@ export type AppConfig = {
     encryptionKeyVersion: number;
     stateTtlMs: number;
     httpTimeoutMs: number;
+    aiGrantTtlMs: number;
+    aiMaxOutputBytes: number;
   };
 };
 
@@ -493,6 +507,8 @@ export const loadConfig = (
       encryptionKeyVersion: parsed.data.CONNECTOR_ENCRYPTION_KEY_VERSION,
       stateTtlMs: parsed.data.CONNECTOR_OAUTH_STATE_TTL_SECONDS * 1000,
       httpTimeoutMs: parsed.data.CONNECTOR_HTTP_TIMEOUT_MS,
+      aiGrantTtlMs: parsed.data.CONNECTOR_AI_GRANT_TTL_SECONDS * 1000,
+      aiMaxOutputBytes: parsed.data.CONNECTOR_AI_MAX_OUTPUT_BYTES,
     },
   };
 };

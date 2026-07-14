@@ -58,6 +58,57 @@ export type ConnectorOAuthAttemptStatus = {
   error?: string;
 };
 
+export type ConnectorAiGrantRequest = {
+  sessionId: string;
+  turnId: string;
+  connectionId: string;
+  capabilities: ConnectorCapability[];
+};
+
+export type ConnectorAiExecutionRequest = {
+  sessionId: string;
+  turnId: string;
+  connectionId: string;
+  capability: ConnectorCapability;
+} & (
+  | {
+      operation: "search";
+      query: string;
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "read";
+      resourceId: string;
+    }
+);
+
+export type ConnectorAiItem = {
+  id: string;
+  type: string;
+  title: string;
+  summary: string | null;
+  content: string | null;
+  url: string | null;
+  author: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+};
+
+export type ConnectorAiExecutionResult =
+  | {
+      operation: "search";
+      capability: ConnectorCapability;
+      items: ConnectorAiItem[];
+      nextCursor: string | null;
+    }
+  | {
+      operation: "read";
+      capability: ConnectorCapability;
+      item: ConnectorAiItem;
+    };
+
 export interface ConnectorConnectionStore {
   createOAuthState(
     userId: string,
@@ -139,4 +190,17 @@ export interface ConnectorService {
     connectionId: string,
     capability: ConnectorCapability,
   ): Promise<{ providerId: ConnectorProviderId; accessToken: string }>;
+  createAiGrant(
+    userId: string,
+    request: ConnectorAiGrantRequest,
+  ): Promise<{
+    grant: string;
+    expiresAt: number;
+    connectionId: string;
+    capabilities: ConnectorCapability[];
+  }>;
+  executeAiRequest(
+    grant: string,
+    request: ConnectorAiExecutionRequest,
+  ): Promise<ConnectorAiExecutionResult>;
 }
