@@ -3,9 +3,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { ApiError } from "../http/apiError.js";
 import { ConnectorCrypto } from "./crypto.js";
 import { connectorProviderCatalog } from "./catalog.js";
+import { ConnectorAiGrantSigner } from "./aiGrant.js";
+import { ConnectorAiExecutor } from "./aiExecutor.js";
 
 import type { AppConfig } from "../config.js";
 import type {
+  ConnectorAiExecutionRequest,
+  ConnectorAiGrantRequest,
   ConnectorConnectionStore,
   ConnectorCapability,
   ConnectorProvider,
@@ -25,6 +29,8 @@ export class DefaultConnectorService implements ConnectorService {
     ConnectorProvider
   >;
   private readonly crypto: ConnectorCrypto;
+  private readonly aiGrantSigner: ConnectorAiGrantSigner;
+  private readonly aiExecutor: ConnectorAiExecutor;
 
   constructor(
     private readonly config: NonNullable<AppConfig["connectors"]>,
@@ -37,6 +43,20 @@ export class DefaultConnectorService implements ConnectorService {
     this.crypto = new ConnectorCrypto(
       config.encryptionKeys,
       config.encryptionKeyVersion,
+    );
+    const currentEncryptionKey = config.encryptionKeys.get(
+      config.encryptionKeyVersion,
+    );
+    if (!currentEncryptionKey) {
+      throw new Error("Current connector encryption key is unavailable");
+    }
+    this.aiGrantSigner = new ConnectorAiGrantSigner(
+      currentEncryptionKey,
+      config.aiGrantTtlMs,
+    );
+    this.aiExecutor = new ConnectorAiExecutor(
+      config.httpTimeoutMs,
+      config.aiMaxOutputBytes,
     );
   }
 
@@ -207,6 +227,58 @@ export class DefaultConnectorService implements ConnectorService {
       providerId: connection.providerId,
       accessToken: tokens.accessToken,
     };
+  }
+
+  async createAiGrant(userId: string, request: ConnectorAiGrantRequest) {
+    const connection = await this.store.getConnection(
+      userId,
+      request.connectionId,
+    );
+    this.provider(connection.providerId);
+    if (
+      request.capabilities.some(
+        (capability) => !connection.capabilities.includes(capability),
+      )
+    ) {
+      throw new ApiError(
+        403,
+        "connector_capability_forbidden",
+        "The connection did not grant every requested capability.",
+      );
+    }
+    const { grant, claims } = this.aiGrantSigner.issue(userId, request);
+    return {
+      grant,
+      expiresAt: claims.expiresAt,
+      connectionId: claims.connectionId,
+      capabilities: [...claims.capabilities],
+    };
+  }
+
+  async executeAiRequest(grant: string, request: ConnectorAiExecutionRequest) {
+    const claims = this.aiGrantSigner.verify(grant);
+    if (
+      claims.sessionId !== request.sessionId ||
+      claims.turnId !== request.turnId ||
+      claims.connectionId !== request.connectionId ||
+      !claims.capabilities.includes(request.capability)
+    ) {
+      throw new ApiError(
+        403,
+        "connector_ai_grant_scope_forbidden",
+        "The connector grant does not authorize this request.",
+      );
+    }
+    const credential = await this.getAuthorizedCredential(
+      claims.subject,
+      claims.connectionId,
+      request.capability,
+    );
+    return this.aiExecutor.execute(
+      credential.providerId,
+      credential.accessToken,
+      request,
+    );
   }
 
   private provider(providerId: ConnectorProviderId) {

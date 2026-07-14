@@ -20,6 +20,8 @@ const config: NonNullable<AppConfig["connectors"]> = {
   encryptionKeyVersion: 1,
   stateTtlMs: 600_000,
   httpTimeoutMs: 15_000,
+  aiGrantTtlMs: 120_000,
+  aiMaxOutputBytes: 256 * 1024,
 };
 
 const tokens = (overrides: Partial<ConnectorTokens> = {}): ConnectorTokens => ({
@@ -254,6 +256,122 @@ describe("DefaultConnectorService", () => {
     expect(saveConnection.mock.calls[0]?.[1]).toMatchObject({
       scopes: ["new-scope"],
     });
+  });
+
+  it("issues AI grants only for capabilities on the authenticated user's connection", async () => {
+    const service = new DefaultConnectorService(
+      config,
+      [provider()],
+      store({
+        getConnection: vi
+          .fn()
+          .mockResolvedValue(encryptedConnection(tokens(), ["mail"])),
+      }),
+    );
+
+    await expect(
+      service.createAiGrant("user-1", {
+        sessionId: "session-1",
+        turnId: "turn-1",
+        connectionId: "connection-1",
+        capabilities: ["drive"],
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "connector_capability_forbidden",
+    });
+  });
+
+  it("binds AI execution to the exact session, turn, connection, and capability", async () => {
+    const connectionStore = store({
+      getConnection: vi
+        .fn()
+        .mockResolvedValue(encryptedConnection(tokens(), ["mail"])),
+    });
+    const service = new DefaultConnectorService(
+      config,
+      [provider()],
+      connectionStore,
+    );
+    const issued = await service.createAiGrant("user-1", {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capabilities: ["mail"],
+    });
+
+    await expect(
+      service.executeAiRequest(issued.grant, {
+        sessionId: "session-1",
+        turnId: "turn-2",
+        connectionId: "connection-1",
+        capability: "mail",
+        operation: "search",
+        query: "status",
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "connector_ai_grant_scope_forbidden",
+    });
+    await expect(
+      service.executeAiRequest(`${issued.grant.slice(0, -1)}x`, {
+        sessionId: "session-1",
+        turnId: "turn-1",
+        connectionId: "connection-1",
+        capability: "mail",
+        operation: "search",
+        query: "status",
+      }),
+    ).rejects.toMatchObject({
+      status: 401,
+      code: "connector_ai_grant_invalid",
+    });
+  });
+
+  it("executes a read-only provider request without returning provider credentials", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ messages: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new DefaultConnectorService(
+      config,
+      [provider()],
+      store({
+        getConnection: vi
+          .fn()
+          .mockResolvedValue(encryptedConnection(tokens(), ["mail"])),
+      }),
+    );
+    const issued = await service.createAiGrant("user-1", {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capabilities: ["mail"],
+    });
+    const result = await service.executeAiRequest(issued.grant, {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capability: "mail",
+      operation: "search",
+      query: "status",
+    });
+
+    expect(result).toEqual({
+      operation: "search",
+      capability: "mail",
+      items: [],
+      nextCursor: null,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBeInstanceOf(URL);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "https://gmail.googleapis.com/",
+    );
+    expect(JSON.stringify(result)).not.toContain("access");
+    vi.unstubAllGlobals();
   });
 });
 
