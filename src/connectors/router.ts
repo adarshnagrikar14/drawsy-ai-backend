@@ -2,6 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { connectorProviderIds } from "./types.js";
+import {
+  connectorAiExecutionRequestSchema,
+  connectorAiGrantRequestSchema,
+} from "./aiSchemas.js";
+import { ApiError } from "../http/apiError.js";
 
 import type { RequestHandler, Response } from "express";
 import type { ConnectorService } from "./types.js";
@@ -9,6 +14,7 @@ import type { ConnectorService } from "./types.js";
 const id = z.string().trim().min(1).max(256);
 const providerId = z.enum(connectorProviderIds);
 const oauthCode = z.string().trim().min(1).max(4_096);
+const aiGrant = z.string().min(32).max(16_384);
 
 const userId = (response: Response) => {
   const user = response.locals.user;
@@ -24,6 +30,29 @@ export const createConnectorsRouter = (
   successUrl: string,
 ) => {
   const router = Router();
+
+  router.post("/connectors/ai/execute", async (request, response) => {
+    const authorization = request.header("authorization");
+    const match = authorization?.match(/^Bearer ([^\s]+)$/);
+    if (!match?.[1]) {
+      throw new ApiError(
+        401,
+        "connector_ai_grant_required",
+        "A valid connector grant is required.",
+      );
+    }
+    const parsedGrant = aiGrant.safeParse(match[1]);
+    if (!parsedGrant.success) {
+      throw new ApiError(
+        401,
+        "connector_ai_grant_invalid",
+        "A valid connector grant is required.",
+      );
+    }
+    const values = connectorAiExecutionRequestSchema.parse(request.body);
+    response.setHeader("Cache-Control", "no-store");
+    response.json(await service.executeAiRequest(parsedGrant.data, values));
+  });
 
   router.get(
     "/connectors/:providerId/oauth/callback",
@@ -94,6 +123,13 @@ export const createConnectorsRouter = (
 
   router.get("/connectors", async (_request, response) => {
     response.json(await service.getOverview(userId(response)));
+  });
+  router.post("/connectors/ai/grants", async (request, response) => {
+    const values = connectorAiGrantRequestSchema.parse(request.body);
+    response.setHeader("Cache-Control", "no-store");
+    response
+      .status(201)
+      .json(await service.createAiGrant(userId(response), values));
   });
   router.post(
     "/connectors/:providerId/oauth/start",
