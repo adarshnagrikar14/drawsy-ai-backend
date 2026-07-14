@@ -45,30 +45,154 @@ const executionContextSchema = {
   sessionId: boundedId,
   turnId: boundedId,
   connectionId: boundedId,
-  capability,
 };
 
-export const connectorAiExecutionRequestSchema = z.discriminatedUnion(
-  "operation",
-  [
-    z
-      .object({
-        ...executionContextSchema,
-        operation: z.literal("search"),
-        query: z.string().trim().min(1).max(2_000),
-        cursor: z.string().trim().min(1).max(4_096).optional(),
-        limit: z.number().int().min(1).max(20).optional(),
-      })
-      .strict(),
-    z
-      .object({
-        ...executionContextSchema,
-        operation: z.literal("read"),
-        resourceId: z.string().trim().min(1).max(4_096),
-      })
-      .strict(),
-  ],
-);
+const cursor = z.string().trim().min(1).max(4_096).optional();
+const limit = z.number().int().min(1).max(100).optional();
+const optionalText = z.string().trim().min(1).max(2_000).optional();
+const isoTimestamp = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((value) => Number.isFinite(Date.parse(value)), {
+    message: "must be an ISO 8601 timestamp",
+  });
+
+export const connectorAiExecutionRequestSchema = z.union([
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("search"),
+      capability,
+      query: z.string().trim().min(1).max(2_000),
+      cursor,
+      limit: z.number().int().min(1).max(20).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("mail"),
+      kind: z.literal("mail_messages"),
+      query: optionalText,
+      after: isoTimestamp.optional(),
+      before: isoTimestamp.optional(),
+      from: z.string().trim().min(1).max(320).optional(),
+      to: z.string().trim().min(1).max(320).optional(),
+      subject: z.string().trim().min(1).max(1_000).optional(),
+      label: z.string().trim().min(1).max(256).optional(),
+      includeSpamTrash: z.boolean().optional(),
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("calendar"),
+      kind: z.literal("calendars"),
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("slack"),
+      kind: z.literal("slack_channels"),
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("slack"),
+      kind: z.literal("slack_messages"),
+      channelId: z.string().trim().min(1).max(256),
+      startTime: isoTimestamp.optional(),
+      endTime: isoTimestamp.optional(),
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("calendar"),
+      kind: z.literal("calendar_events"),
+      calendarId: z.string().trim().min(1).max(1_024).optional(),
+      startTime: isoTimestamp,
+      endTime: isoTimestamp,
+      timeZone: z.string().trim().min(1).max(128).optional(),
+      query: optionalText,
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("drive"),
+      kind: z.literal("drive_files"),
+      query: optionalText,
+      mimeType: z.string().trim().min(1).max(256).optional(),
+      orderBy: z
+        .enum(["modifiedTime desc", "createdTime desc", "name"])
+        .optional(),
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("notion"),
+      kind: z.literal("notion_content"),
+      query: optionalText,
+      object: z.enum(["page", "data_source"]).optional(),
+      sortDirection: z.enum(["ascending", "descending"]).optional(),
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("github"),
+      kind: z.literal("github_repositories"),
+      owner: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/)
+        .optional(),
+      visibility: z.enum(["all", "public", "private"]).optional(),
+      cursor: z
+        .string()
+        .trim()
+        .regex(/^\d{1,3}$/)
+        .optional(),
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("read"),
+      capability,
+      resourceId: z.string().trim().min(1).max(4_096),
+    })
+    .strict(),
+]);
 
 export const connectorAiGrantClaimsSchema = z
   .object({

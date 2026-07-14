@@ -163,8 +163,25 @@ describe("ConnectorAiExecutor", () => {
           json({
             results: [
               {
+                id: "block-1",
                 type: "paragraph",
+                has_children: true,
                 paragraph: { rich_text: [{ plain_text: "Brief body" }] },
+              },
+            ],
+            has_more: false,
+          }),
+        );
+      }
+      if (path === "/v1/blocks/block-1/children") {
+        return Promise.resolve(
+          json({
+            results: [
+              {
+                id: "block-2",
+                type: "to_do",
+                has_children: false,
+                to_do: { rich_text: [{ plain_text: "Nested task" }] },
               },
             ],
             has_more: false,
@@ -299,6 +316,12 @@ describe("ConnectorAiExecutor", () => {
         (read as Extract<ConnectorAiExecutionResult, { operation: "read" }>)
           .item.type,
       ).toBe(testCase.expectedType);
+      if (testCase.capability === "notion") {
+        expect(
+          (read as Extract<ConnectorAiExecutionResult, { operation: "read" }>)
+            .item.content,
+        ).toContain("Nested task");
+      }
       expect(JSON.stringify(read)).not.toContain("provider-secret");
     }
 
@@ -316,6 +339,354 @@ describe("ConnectorAiExecutor", () => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe("Bearer provider-secret");
     }
+  });
+
+  it("uses provider-native list semantics for recent mail, calendar ranges, Drive files, and repositories", async () => {
+    const requested: URL[] = [];
+    const fetchMock = vi.fn((input: string | URL, init?: RequestInit) => {
+      const target = new URL(String(input));
+      requested.push(target);
+      if (target.pathname === "/gmail/v1/users/me/messages") {
+        return Promise.resolve(
+          json({ messages: [{ id: "older" }, { id: "newer" }] }),
+        );
+      }
+      if (target.pathname.startsWith("/gmail/v1/users/me/messages/")) {
+        const id = target.pathname.split("/").at(-1);
+        return Promise.resolve(
+          json({
+            id,
+            internalDate: id === "newer" ? "1784073600000" : "1783987200000",
+            payload: {
+              headers: [{ name: "Subject", value: id }],
+            },
+          }),
+        );
+      }
+      if (target.pathname === "/calendar/v3/users/me/calendarList") {
+        return Promise.resolve(
+          json({
+            items: [
+              {
+                id: "primary@example.com",
+                summary: "Primary",
+                timeZone: "Asia/Kolkata",
+                primary: true,
+              },
+            ],
+          }),
+        );
+      }
+      if (
+        target.pathname ===
+        "/calendar/v3/calendars/primary%40example.com/events/event-1"
+      ) {
+        return Promise.resolve(
+          json({
+            id: "event-1",
+            summary: "Project review",
+            start: { dateTime: "2026-07-18T12:00:00+05:30" },
+            end: { dateTime: "2026-07-18T13:00:00+05:30" },
+          }),
+        );
+      }
+      if (
+        target.pathname ===
+        "/calendar/v3/calendars/primary%40example.com/events"
+      ) {
+        return Promise.resolve(
+          json({
+            items: [
+              {
+                id: "event-1",
+                summary: "Project review",
+                start: { dateTime: "2026-07-18T12:00:00+05:30" },
+                end: { dateTime: "2026-07-18T13:00:00+05:30" },
+                attendees: [{ self: true, responseStatus: "accepted" }],
+                hangoutLink: "https://meet.google.com/abc-defg-hij",
+                recurringEventId: "series-1",
+              },
+            ],
+          }),
+        );
+      }
+      if (target.pathname === "/drive/v3/files") {
+        return Promise.resolve(
+          json({
+            files: [
+              {
+                id: "drawio-1",
+                name: "Architecture.drawio",
+                mimeType: "application/octet-stream",
+                modifiedTime: "2026-07-14T12:00:00Z",
+              },
+            ],
+          }),
+        );
+      }
+      if (
+        target.pathname === "/drive/v3/files/drawio-1" &&
+        target.searchParams.get("alt") === "media"
+      ) {
+        return Promise.resolve(new Response("<mxfile />", { status: 200 }));
+      }
+      if (target.pathname === "/drive/v3/files/drawio-1") {
+        return Promise.resolve(
+          json({
+            id: "drawio-1",
+            name: "Architecture.drawio",
+            mimeType: "application/octet-stream",
+          }),
+        );
+      }
+      if (target.pathname === "/api/conversations.list") {
+        return Promise.resolve(
+          json({
+            ok: true,
+            channels: [
+              {
+                id: "C1",
+                name: "launch",
+                is_member: true,
+                topic: { value: "Launch decisions" },
+              },
+            ],
+            response_metadata: { next_cursor: "" },
+          }),
+        );
+      }
+      if (target.pathname === "/api/conversations.history") {
+        return Promise.resolve(
+          json({
+            ok: true,
+            messages: [
+              {
+                ts: "1784043000.000100",
+                text: "Launch is ready",
+                user: "U1",
+              },
+            ],
+            response_metadata: { next_cursor: "" },
+          }),
+        );
+      }
+      if (target.pathname === "/v1/search") {
+        const body: unknown =
+          typeof init?.body === "string" ? JSON.parse(init.body) : null;
+        expect(body).toMatchObject({
+          sort: {
+            direction: "descending",
+            timestamp: "last_edited_time",
+          },
+          page_size: 50,
+        });
+        expect(body).not.toHaveProperty("query");
+        return Promise.resolve(
+          json({
+            results: [
+              {
+                object: "page",
+                id: "notion-recent",
+                url: "https://notion.so/notion-recent",
+                last_edited_time: "2026-07-14T12:00:00Z",
+                properties: {
+                  Name: { title: [{ plain_text: "Latest brief" }] },
+                },
+              },
+            ],
+            has_more: false,
+          }),
+        );
+      }
+      if (target.pathname === "/user/repos") {
+        return Promise.resolve(
+          json([
+            {
+              id: 1,
+              name: "drawsy",
+              full_name: "adarsh/drawsy",
+              html_url: "https://github.com/adarsh/drawsy",
+              description: "Canvas agent",
+              private: true,
+              visibility: "private",
+              updated_at: "2026-07-14T12:00:00Z",
+              pushed_at: "2026-07-14T12:00:00Z",
+              default_branch: "main",
+              owner: { login: "adarsh" },
+            },
+          ]),
+        );
+      }
+      if (target.pathname === "/repos/adarsh/drawsy") {
+        return Promise.resolve(
+          json({
+            id: 1,
+            name: "drawsy",
+            full_name: "adarsh/drawsy",
+            html_url: "https://github.com/adarsh/drawsy",
+            description: "Canvas agent",
+            private: true,
+            visibility: "private",
+            updated_at: "2026-07-14T12:00:00Z",
+            default_branch: "main",
+            owner: { login: "adarsh" },
+          }),
+        );
+      }
+      if (target.pathname === "/repos/adarsh/drawsy/readme") {
+        return Promise.resolve(
+          json({
+            content: Buffer.from("# Drawsy").toString("base64"),
+            encoding: "base64",
+          }),
+        );
+      }
+      throw new Error(`Unexpected provider request: ${target}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const executor = new ConnectorAiExecutor(15_000, 256 * 1024);
+    const context = {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+    };
+
+    const mail = await executor.execute("google-workspace", "secret", {
+      ...context,
+      operation: "list",
+      capability: "mail",
+      kind: "mail_messages",
+      after: "2026-07-14T00:00:00+05:30",
+      limit: 2,
+    });
+    expect(mail.operation).toBe("list");
+    expect(mail.operation === "list" && mail.items[0]?.title).toBe("newer");
+
+    await executor.execute("google-workspace", "secret", {
+      ...context,
+      operation: "list",
+      capability: "calendar",
+      kind: "calendars",
+    });
+    const calendar = await executor.execute("google-workspace", "secret", {
+      ...context,
+      operation: "list",
+      capability: "calendar",
+      kind: "calendar_events",
+      calendarId: "primary@example.com",
+      startTime: "2026-07-13T00:00:00+05:30",
+      endTime: "2026-07-20T00:00:00+05:30",
+      timeZone: "Asia/Kolkata",
+    });
+    expect(
+      calendar.operation === "list" && calendar.items[0]?.metadata,
+    ).toMatchObject({
+      selfResponse: "accepted",
+      recurring: true,
+      conferenceUrl: "https://meet.google.com/abc-defg-hij",
+    });
+    const calendarItem =
+      calendar.operation === "list" ? calendar.items[0] : undefined;
+    const calendarRead = await executor.execute("google-workspace", "secret", {
+      ...context,
+      operation: "read",
+      capability: "calendar",
+      resourceId: calendarItem!.id,
+    });
+    expect(calendarRead.operation === "read" && calendarRead.item.title).toBe(
+      "Project review",
+    );
+
+    const drive = await executor.execute("google-workspace", "secret", {
+      ...context,
+      operation: "list",
+      capability: "drive",
+      kind: "drive_files",
+    });
+    const driveItem = drive.operation === "list" ? drive.items[0] : undefined;
+    const driveRead = await executor.execute("google-workspace", "secret", {
+      ...context,
+      operation: "read",
+      capability: "drive",
+      resourceId: driveItem!.id,
+    });
+    expect(driveRead.operation === "read" && driveRead.item.content).toBe(
+      "<mxfile />",
+    );
+
+    const repositories = await executor.execute("github", "secret", {
+      ...context,
+      operation: "list",
+      capability: "github",
+      kind: "github_repositories",
+      visibility: "all",
+    });
+    const repository =
+      repositories.operation === "list" ? repositories.items[0] : undefined;
+    const repositoryRead = await executor.execute("github", "secret", {
+      ...context,
+      operation: "read",
+      capability: "github",
+      resourceId: repository!.id,
+    });
+    expect(
+      repositoryRead.operation === "read" && repositoryRead.item.content,
+    ).toBe("# Drawsy");
+
+    const channels = await executor.execute("slack", "secret", {
+      ...context,
+      operation: "list",
+      capability: "slack",
+      kind: "slack_channels",
+    });
+    expect(channels.operation === "list" && channels.items[0]?.title).toBe(
+      "#launch",
+    );
+    const messages = await executor.execute("slack", "secret", {
+      ...context,
+      operation: "list",
+      capability: "slack",
+      kind: "slack_messages",
+      channelId: "C1",
+      startTime: "2026-07-14T00:00:00+05:30",
+      endTime: "2026-07-15T00:00:00+05:30",
+    });
+    expect(messages.operation === "list" && messages.items[0]?.summary).toBe(
+      "Launch is ready",
+    );
+    const notion = await executor.execute("notion", "secret", {
+      ...context,
+      operation: "list",
+      capability: "notion",
+      kind: "notion_content",
+    });
+    expect(notion.operation === "list" && notion.items[0]?.title).toBe(
+      "Latest brief",
+    );
+
+    const calendarRequest = requested.find((target) =>
+      target.pathname.endsWith("/events"),
+    );
+    expect(calendarRequest?.searchParams.get("timeMin")).toBe(
+      "2026-07-13T00:00:00+05:30",
+    );
+    expect(calendarRequest?.searchParams.get("timeMax")).toBe(
+      "2026-07-20T00:00:00+05:30",
+    );
+    expect(calendarRequest?.searchParams.get("q")).toBeNull();
+    expect(calendarRequest?.searchParams.get("singleEvents")).toBe("true");
+    expect(calendarRequest?.searchParams.get("orderBy")).toBe("startTime");
+    const slackHistoryRequest = requested.find(
+      (target) => target.pathname === "/api/conversations.history",
+    );
+    expect(slackHistoryRequest?.searchParams.get("channel")).toBe("C1");
+    expect(slackHistoryRequest?.searchParams.get("oldest")).toBe(
+      "1783967400.000000",
+    );
+    expect(slackHistoryRequest?.searchParams.get("latest")).toBe(
+      "1784053800.000000",
+    );
+    expect(slackHistoryRequest?.searchParams.get("limit")).toBe("15");
   });
 
   it("rejects provider/capability mismatches before making a network request", async () => {

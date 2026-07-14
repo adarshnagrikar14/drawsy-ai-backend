@@ -64,6 +64,24 @@ const calendarListSchema = z.object({
   items: z.array(z.unknown()).optional(),
   nextPageToken: z.string().optional(),
 });
+const calendarCatalogSchema = z.object({
+  items: z
+    .array(
+      z
+        .object({
+          id: z.string().min(1),
+          summary: z.string().min(1),
+          description: z.string().optional(),
+          timeZone: z.string().optional(),
+          accessRole: z.string().optional(),
+          primary: z.boolean().optional(),
+          selected: z.boolean().optional(),
+        })
+        .passthrough(),
+    )
+    .optional(),
+  nextPageToken: z.string().optional(),
+});
 const calendarEventSchema = z
   .object({
     id: z.string().min(1),
@@ -98,8 +116,22 @@ const calendarEventSchema = z
           displayName: z.string().optional(),
           email: z.string().optional(),
           responseStatus: z.string().optional(),
+          self: z.boolean().optional(),
         }),
       )
+      .optional(),
+    hangoutLink: z.string().url().optional(),
+    recurringEventId: z.string().optional(),
+    originalStartTime: z
+      .object({ dateTime: z.string().optional(), date: z.string().optional() })
+      .optional(),
+    conferenceData: z
+      .object({
+        entryPoints: z
+          .array(z.object({ uri: z.string().url().optional() }).passthrough())
+          .optional(),
+      })
+      .passthrough()
       .optional(),
   })
   .passthrough();
@@ -176,6 +208,48 @@ const slackSearchSchema = z.object({
       .optional(),
   }),
 });
+const slackChannelsSchema = z.object({
+  ok: z.literal(true),
+  channels: z.array(
+    z
+      .object({
+        id: z.string().min(1),
+        name: z.string().optional(),
+        user: z.string().optional(),
+        created: z.number().optional(),
+        updated: z.number().optional(),
+        is_im: z.boolean().optional(),
+        is_mpim: z.boolean().optional(),
+        is_private: z.boolean().optional(),
+        is_member: z.boolean().optional(),
+        num_members: z.number().int().nonnegative().optional(),
+        topic: z.object({ value: z.string().optional() }).optional(),
+        purpose: z.object({ value: z.string().optional() }).optional(),
+      })
+      .passthrough(),
+  ),
+  response_metadata: z
+    .object({ next_cursor: z.string().optional() })
+    .optional(),
+});
+const slackHistorySchema = z.object({
+  ok: z.literal(true),
+  messages: z.array(
+    z
+      .object({
+        ts: z.string().min(1),
+        text: z.string().default(""),
+        user: z.string().optional(),
+        username: z.string().optional(),
+        thread_ts: z.string().optional(),
+        reply_count: z.number().int().nonnegative().optional(),
+      })
+      .passthrough(),
+  ),
+  response_metadata: z
+    .object({ next_cursor: z.string().optional() })
+    .optional(),
+});
 const slackRepliesSchema = z.object({
   ok: z.literal(true),
   messages: z.array(
@@ -193,6 +267,30 @@ const githubSearchSchema = z.object({
   total_count: z.number().int().nonnegative(),
   incomplete_results: z.boolean(),
   items: z.array(z.unknown()),
+});
+const githubRepositorySchema = z
+  .object({
+    id: z.number().int().positive(),
+    name: z.string().min(1),
+    full_name: z.string().min(3),
+    html_url: z.string().url(),
+    description: z.string().nullable().optional(),
+    private: z.boolean(),
+    visibility: z.string().optional(),
+    created_at: z.string().optional(),
+    updated_at: z.string().optional(),
+    pushed_at: z.string().nullable().optional(),
+    default_branch: z.string().optional(),
+    language: z.string().nullable().optional(),
+    stargazers_count: z.number().int().nonnegative().optional(),
+    owner: z.object({ login: z.string().min(1) }).optional(),
+  })
+  .passthrough();
+const githubRepositoryListSchema = z.array(githubRepositorySchema);
+const githubReadmeSchema = z.object({
+  content: z.string(),
+  encoding: z.literal("base64"),
+  html_url: z.string().url().optional(),
 });
 const githubIssueSchema = z
   .object({
@@ -230,8 +328,37 @@ export class ConnectorAiExecutor {
     const result =
       request.operation === "search"
         ? await this.search(providerId, accessToken, request)
-        : await this.read(providerId, accessToken, request);
+        : request.operation === "list"
+          ? await this.list(providerId, accessToken, request)
+          : await this.read(providerId, accessToken, request);
     return this.fitOutput(result);
+  }
+
+  private async list(
+    providerId: ConnectorProviderId,
+    accessToken: string,
+    request: Extract<ConnectorAiExecutionRequest, { operation: "list" }>,
+  ): Promise<ConnectorAiExecutionResult> {
+    switch (request.kind) {
+      case "mail_messages":
+        return this.listMailMessages(accessToken, request);
+      case "calendars":
+        return this.listCalendars(accessToken, request);
+      case "calendar_events":
+        return this.listCalendarEvents(accessToken, request);
+      case "drive_files":
+        return this.listDriveFiles(accessToken, request);
+      case "notion_content":
+        return this.listNotionContent(accessToken, request);
+      case "github_repositories":
+        return this.listGitHubRepositories(accessToken, request);
+      case "slack_channels":
+        return this.listSlackChannels(accessToken, request);
+      case "slack_messages":
+        return this.listSlackMessages(accessToken, request);
+      default:
+        return this.unreachable(request);
+    }
   }
 
   private async search(
@@ -312,6 +439,54 @@ export class ConnectorAiExecutor {
       operation: "search" as const,
       capability: "mail" as const,
       items,
+      nextCursor: result.nextPageToken || null,
+    };
+  }
+
+  private async listMailMessages(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "mail_messages" }
+    >,
+  ) {
+    const target = new URL("/gmail/v1/users/me/messages", GOOGLE_GMAIL_API);
+    const query = [
+      request.query,
+      request.after && `after:${this.gmailTimestamp(request.after)}`,
+      request.before && `before:${this.gmailTimestamp(request.before)}`,
+      request.from && `from:${this.gmailSearchValue(request.from)}`,
+      request.to && `to:${this.gmailSearchValue(request.to)}`,
+      request.subject && `subject:${this.gmailSearchValue(request.subject)}`,
+      request.label && `label:${this.gmailSearchValue(request.label)}`,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(" ");
+    if (query) target.searchParams.set("q", query);
+    target.searchParams.set("maxResults", String(request.limit || 20));
+    if (request.includeSpamTrash) {
+      target.searchParams.set("includeSpamTrash", "true");
+    }
+    if (request.cursor) target.searchParams.set("pageToken", request.cursor);
+    const result = await this.json(
+      target,
+      this.googleHeaders(accessToken),
+      gmailListSchema,
+    );
+    const messages = await Promise.all(
+      (result.messages || []).map((message) =>
+        this.gmailMessage(accessToken, message.id, "metadata"),
+      ),
+    );
+    messages.sort(
+      (left, right) =>
+        Number(right.internalDate || 0) - Number(left.internalDate || 0),
+    );
+    return {
+      operation: "list" as const,
+      capability: "mail" as const,
+      kind: "mail_messages" as const,
+      items: messages.map((message) => this.mailItem(message, false)),
       nextCursor: result.nextPageToken || null,
     };
   }
@@ -411,9 +586,106 @@ export class ConnectorAiExecutor {
     };
   }
 
-  private async readCalendar(accessToken: string, resource: ResourceId) {
+  private async listCalendars(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "calendars" }
+    >,
+  ) {
     const target = new URL(
-      `/calendar/v3/calendars/primary/events/${encodeURIComponent(resource.id)}`,
+      "/calendar/v3/users/me/calendarList",
+      GOOGLE_CALENDAR_API,
+    );
+    target.searchParams.set("maxResults", String(request.limit || 100));
+    target.searchParams.set("showDeleted", "false");
+    if (request.cursor) target.searchParams.set("pageToken", request.cursor);
+    const result = await this.json(
+      target,
+      this.googleHeaders(accessToken),
+      calendarCatalogSchema,
+    );
+    return {
+      operation: "list" as const,
+      capability: "calendar" as const,
+      kind: "calendars" as const,
+      items: (result.items || []).map((calendar) =>
+        this.item({
+          id: this.encodeResourceId({
+            providerId: "google-workspace",
+            capability: "calendar",
+            type: "calendar",
+            id: calendar.id,
+          }),
+          type: "calendar",
+          title: calendar.summary,
+          summary: calendar.description || null,
+          content: null,
+          url: null,
+          author: null,
+          createdAt: null,
+          updatedAt: null,
+          metadata: {
+            calendarId: calendar.id,
+            timeZone: calendar.timeZone || null,
+            accessRole: calendar.accessRole || null,
+            primary: calendar.primary || false,
+            selected: calendar.selected ?? true,
+          },
+        }),
+      ),
+      nextCursor: result.nextPageToken || null,
+    };
+  }
+
+  private async listCalendarEvents(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "calendar_events" }
+    >,
+  ) {
+    if (Date.parse(request.endTime) <= Date.parse(request.startTime)) {
+      throw new ApiError(
+        400,
+        "connector_time_range_invalid",
+        "The calendar end time must be after the start time.",
+      );
+    }
+    const calendarId = request.calendarId || "primary";
+    const target = new URL(
+      `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+      GOOGLE_CALENDAR_API,
+    );
+    target.searchParams.set("timeMin", request.startTime);
+    target.searchParams.set("timeMax", request.endTime);
+    target.searchParams.set("singleEvents", "true");
+    target.searchParams.set("showDeleted", "false");
+    target.searchParams.set("orderBy", "startTime");
+    target.searchParams.set("maxResults", String(request.limit || 100));
+    if (request.timeZone) target.searchParams.set("timeZone", request.timeZone);
+    if (request.query) target.searchParams.set("q", request.query);
+    if (request.cursor) target.searchParams.set("pageToken", request.cursor);
+    const result = await this.json(
+      target,
+      this.googleHeaders(accessToken),
+      calendarListSchema,
+    );
+    return {
+      operation: "list" as const,
+      capability: "calendar" as const,
+      kind: "calendar_events" as const,
+      items: (result.items || []).map((value) =>
+        this.calendarItem(calendarEventSchema.parse(value), true, calendarId),
+      ),
+      nextCursor: result.nextPageToken || null,
+    };
+  }
+
+  private async readCalendar(accessToken: string, resource: ResourceId) {
+    const calendarId = resource.parentId || "primary";
+    const target = new URL(
+      `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(resource.id)}`,
       GOOGLE_CALENDAR_API,
     );
     const event = await this.json(
@@ -431,16 +703,25 @@ export class ConnectorAiExecutor {
   private calendarItem(
     event: z.infer<typeof calendarEventSchema>,
     includeContent: boolean,
+    calendarId = "primary",
   ) {
     const attendees = (event.attendees || [])
       .map((attendee) => attendee.displayName || attendee.email)
       .filter((value): value is string => Boolean(value));
+    const selfResponse = event.attendees?.find(
+      (attendee) => attendee.self,
+    )?.responseStatus;
+    const conferenceUrl =
+      event.hangoutLink ||
+      event.conferenceData?.entryPoints?.find((entry) => entry.uri)?.uri ||
+      null;
     return this.item({
       id: this.encodeResourceId({
         providerId: "google-workspace",
         capability: "calendar",
         type: "event",
         id: event.id,
+        parentId: calendarId,
       }),
       type: "calendar_event",
       title: event.summary || "Untitled event",
@@ -450,6 +731,7 @@ export class ConnectorAiExecutor {
             event.description,
             event.location && `Location: ${event.location}`,
             attendees.length && `Attendees: ${attendees.join(", ")}`,
+            conferenceUrl && `Conference: ${conferenceUrl}`,
           ]
             .filter(Boolean)
             .join("\n\n") || null
@@ -468,6 +750,14 @@ export class ConnectorAiExecutor {
         status: event.status || null,
         startsAt: event.start?.dateTime || event.start?.date || null,
         endsAt: event.end?.dateTime || event.end?.date || null,
+        selfResponse: selfResponse || null,
+        conferenceUrl,
+        recurring: Boolean(event.recurringEventId),
+        recurringEventId: event.recurringEventId || null,
+        originalStartsAt:
+          event.originalStartTime?.dateTime ||
+          event.originalStartTime?.date ||
+          null,
       },
     });
   }
@@ -503,6 +793,48 @@ export class ConnectorAiExecutor {
     };
   }
 
+  private async listDriveFiles(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "drive_files" }
+    >,
+  ) {
+    const target = new URL("/drive/v3/files", GOOGLE_DRIVE_API);
+    const conditions = ["trashed = false"];
+    if (request.query) {
+      const query = this.driveQueryValue(request.query);
+      conditions.push(
+        `(name contains '${query}' or fullText contains '${query}')`,
+      );
+    }
+    if (request.mimeType) {
+      conditions.push(`mimeType = '${this.driveQueryValue(request.mimeType)}'`);
+    }
+    target.searchParams.set("q", conditions.join(" and "));
+    target.searchParams.set("pageSize", String(request.limit || 50));
+    target.searchParams.set("orderBy", request.orderBy || "modifiedTime desc");
+    target.searchParams.set(
+      "fields",
+      "nextPageToken,files(id,name,mimeType,webViewLink,description,createdTime,modifiedTime,size,owners(displayName,emailAddress))",
+    );
+    if (request.cursor) target.searchParams.set("pageToken", request.cursor);
+    const result = await this.json(
+      target,
+      this.googleHeaders(accessToken),
+      driveListSchema,
+    );
+    return {
+      operation: "list" as const,
+      capability: "drive" as const,
+      kind: "drive_files" as const,
+      items: (result.files || []).map((value) =>
+        this.driveItem(driveFileSchema.parse(value), null),
+      ),
+      nextCursor: result.nextPageToken || null,
+    };
+  }
+
   private async readDrive(accessToken: string, resource: ResourceId) {
     const target = new URL(
       `/drive/v3/files/${encodeURIComponent(resource.id)}`,
@@ -531,7 +863,7 @@ export class ConnectorAiExecutor {
       );
       exportTarget.searchParams.set("mimeType", exportMime);
       content = await this.text(exportTarget, this.googleHeaders(accessToken));
-    } else if (this.isTextMime(file.mimeType)) {
+    } else if (this.isTextFile(file.name, file.mimeType)) {
       const contentTarget = new URL(
         `/drive/v3/files/${encodeURIComponent(resource.id)}`,
         GOOGLE_DRIVE_API,
@@ -596,6 +928,43 @@ export class ConnectorAiExecutor {
     };
   }
 
+  private async listNotionContent(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "notion_content" }
+    >,
+  ) {
+    const target = new URL("/v1/search", NOTION_API);
+    const body = {
+      ...(request.query ? { query: request.query } : {}),
+      ...(request.object
+        ? { filter: { property: "object", value: request.object } }
+        : {}),
+      sort: {
+        direction: request.sortDirection || "descending",
+        timestamp: "last_edited_time",
+      },
+      page_size: request.limit || 50,
+      ...(request.cursor ? { start_cursor: request.cursor } : {}),
+    };
+    const result = await this.json(
+      target,
+      this.notionHeaders(accessToken, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      notionSearchSchema,
+    );
+    return {
+      operation: "list" as const,
+      capability: "notion" as const,
+      kind: "notion_content" as const,
+      items: result.results.map((entry) => this.notionItem(entry, null)),
+      nextCursor: result.has_more ? result.next_cursor || null : null,
+    };
+  }
+
   private async readNotion(accessToken: string, resource: ResourceId) {
     const basePath =
       resource.type === "page"
@@ -611,21 +980,100 @@ export class ConnectorAiExecutor {
     );
     let content: string | null = null;
     if (resource.type === "page") {
-      const children = await this.json(
-        new URL(
-          `/v1/blocks/${encodeURIComponent(resource.id)}/children?page_size=100`,
-          NOTION_API,
-        ),
-        this.notionHeaders(accessToken),
-        notionChildrenSchema,
-      );
-      content = this.notionBlockText(children.results) || null;
+      content =
+        (await this.notionBlockContent(accessToken, resource.id)) || null;
+    } else if (resource.type === "data_source") {
+      content =
+        (await this.notionDataSourceContent(accessToken, resource.id)) || null;
     }
     return {
       operation: "read" as const,
       capability: "notion" as const,
       item: this.notionItem(entry, content),
     };
+  }
+
+  private async notionBlockContent(accessToken: string, blockId: string) {
+    const budget = { remaining: 1_000 };
+    const readChildren = async (
+      id: string,
+      depth: number,
+    ): Promise<string[]> => {
+      if (depth > 12 || budget.remaining <= 0) return [];
+      const lines: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const target = new URL(
+          `/v1/blocks/${encodeURIComponent(id)}/children`,
+          NOTION_API,
+        );
+        target.searchParams.set("page_size", "100");
+        if (cursor) target.searchParams.set("start_cursor", cursor);
+        const page = await this.json(
+          target,
+          this.notionHeaders(accessToken),
+          notionChildrenSchema,
+        );
+        const available = page.results.slice(0, budget.remaining);
+        budget.remaining -= available.length;
+        const ownText = this.notionBlockText(available);
+        if (ownText) lines.push(ownText);
+        for (const block of available) {
+          const parsed = z
+            .object({
+              id: z.string().min(1),
+              has_children: z.boolean().optional(),
+            })
+            .passthrough()
+            .safeParse(block);
+          if (
+            parsed.success &&
+            parsed.data.has_children &&
+            budget.remaining > 0
+          ) {
+            lines.push(...(await readChildren(parsed.data.id, depth + 1)));
+          }
+        }
+        cursor = page.has_more ? page.next_cursor || null : null;
+      } while (cursor && budget.remaining > 0);
+      return lines;
+    };
+    return (await readChildren(blockId, 0)).filter(Boolean).join("\n");
+  }
+
+  private async notionDataSourceContent(
+    accessToken: string,
+    dataSourceId: string,
+  ) {
+    const lines: string[] = [];
+    let cursor: string | null = null;
+    let remaining = 500;
+    do {
+      const body: { page_size: number; start_cursor?: string } = {
+        page_size: Math.min(100, remaining),
+        ...(cursor ? { start_cursor: cursor } : {}),
+      };
+      const page: z.infer<typeof notionSearchSchema> = await this.json(
+        new URL(
+          `/v1/data_sources/${encodeURIComponent(dataSourceId)}/query`,
+          NOTION_API,
+        ),
+        this.notionHeaders(accessToken, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        notionSearchSchema,
+      );
+      for (const entry of page.results) {
+        if (entry.object !== "page") continue;
+        const title = this.notionTitle(entry);
+        const properties = this.notionPropertiesText(entry.properties || {});
+        lines.push(properties ? `- ${title} — ${properties}` : `- ${title}`);
+      }
+      remaining -= page.results.length;
+      cursor = page.has_more ? page.next_cursor || null : null;
+    } while (cursor && remaining > 0);
+    return lines.join("\n");
   }
 
   private notionItem(
@@ -699,6 +1147,141 @@ export class ConnectorAiExecutor {
       items,
       nextCursor:
         paging && paging.page < paging.pages ? String(paging.page + 1) : null,
+    };
+  }
+
+  private async listSlackChannels(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "slack_channels" }
+    >,
+  ) {
+    const target = new URL("/api/conversations.list", SLACK_API);
+    target.searchParams.set("types", "public_channel,private_channel,mpim,im");
+    target.searchParams.set("exclude_archived", "true");
+    target.searchParams.set("limit", String(request.limit || 100));
+    if (request.cursor) target.searchParams.set("cursor", request.cursor);
+    const result = await this.json(
+      target,
+      this.bearerHeaders(accessToken),
+      slackChannelsSchema,
+    );
+    return {
+      operation: "list" as const,
+      capability: "slack" as const,
+      kind: "slack_channels" as const,
+      items: result.channels.map((channel) => {
+        const title = channel.name
+          ? `#${channel.name}`
+          : channel.is_im && channel.user
+            ? `Direct message · ${channel.user}`
+            : "Slack conversation";
+        return this.item({
+          id: this.encodeResourceId({
+            providerId: "slack",
+            capability: "slack",
+            type: "channel",
+            id: channel.id,
+          }),
+          type: "slack_channel",
+          title,
+          summary: channel.topic?.value || channel.purpose?.value || null,
+          content: null,
+          url: null,
+          author: null,
+          createdAt: channel.created
+            ? this.isoTimestamp(channel.created * 1_000)
+            : null,
+          updatedAt: channel.updated
+            ? this.isoTimestamp(channel.updated)
+            : null,
+          metadata: {
+            channelId: channel.id,
+            directMessage: channel.is_im || false,
+            multiPartyDirectMessage: channel.is_mpim || false,
+            private: channel.is_private || false,
+            member: channel.is_member ?? true,
+            memberCount: channel.num_members ?? null,
+          },
+        });
+      }),
+      nextCursor: result.response_metadata?.next_cursor || null,
+    };
+  }
+
+  private async listSlackMessages(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "slack_messages" }
+    >,
+  ) {
+    if (
+      request.startTime &&
+      request.endTime &&
+      Date.parse(request.endTime) <= Date.parse(request.startTime)
+    ) {
+      throw new ApiError(
+        400,
+        "connector_time_range_invalid",
+        "The Slack end time must be after the start time.",
+      );
+    }
+    const target = new URL("/api/conversations.history", SLACK_API);
+    target.searchParams.set("channel", request.channelId);
+    target.searchParams.set("limit", String(request.limit || 15));
+    if (request.startTime) {
+      target.searchParams.set(
+        "oldest",
+        this.slackApiTimestamp(request.startTime),
+      );
+    }
+    if (request.endTime) {
+      target.searchParams.set(
+        "latest",
+        this.slackApiTimestamp(request.endTime),
+      );
+    }
+    if (request.startTime || request.endTime) {
+      target.searchParams.set("inclusive", "true");
+    }
+    if (request.cursor) target.searchParams.set("cursor", request.cursor);
+    const result = await this.json(
+      target,
+      this.bearerHeaders(accessToken),
+      slackHistorySchema,
+    );
+    return {
+      operation: "list" as const,
+      capability: "slack" as const,
+      kind: "slack_messages" as const,
+      items: result.messages.map((message) =>
+        this.item({
+          id: this.encodeResourceId({
+            providerId: "slack",
+            capability: "slack",
+            type: "message",
+            id: message.thread_ts || message.ts,
+            parentId: request.channelId,
+          }),
+          type: "slack_message",
+          title: "Slack message",
+          summary: message.text || null,
+          content: null,
+          url: null,
+          author: message.username || message.user || null,
+          createdAt: this.slackTimestamp(message.ts),
+          updatedAt: null,
+          metadata: {
+            channelId: request.channelId,
+            messageTimestamp: message.ts,
+            threadTimestamp: message.thread_ts || null,
+            replyCount: message.reply_count || 0,
+          },
+        }),
+      ),
+      nextCursor: result.response_metadata?.next_cursor || null,
     };
   }
 
@@ -778,7 +1361,90 @@ export class ConnectorAiExecutor {
     };
   }
 
+  private async listGitHubRepositories(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "github_repositories" }
+    >,
+  ) {
+    const page = request.cursor ? Number(request.cursor) : 1;
+    if (!Number.isInteger(page) || page < 1 || page > 100) {
+      throw this.invalidCursor();
+    }
+    const limit = request.limit || 30;
+    const target = new URL(
+      request.owner
+        ? `/users/${encodeURIComponent(request.owner)}/repos`
+        : "/user/repos",
+      GITHUB_API,
+    );
+    target.searchParams.set("sort", "updated");
+    target.searchParams.set("direction", "desc");
+    target.searchParams.set("per_page", String(limit));
+    target.searchParams.set("page", String(page));
+    if (request.owner) {
+      target.searchParams.set("type", "owner");
+    } else {
+      target.searchParams.set(
+        "affiliation",
+        "owner,collaborator,organization_member",
+      );
+      target.searchParams.set("visibility", request.visibility || "all");
+    }
+    const repositories = await this.json(
+      target,
+      this.githubHeaders(accessToken),
+      githubRepositoryListSchema,
+    );
+    const items = repositories.map((repository) =>
+      this.githubRepositoryItem(repository, null),
+    );
+    return {
+      operation: "list" as const,
+      capability: "github" as const,
+      kind: "github_repositories" as const,
+      items,
+      nextCursor:
+        repositories.length === limit && page < 100 ? String(page + 1) : null,
+    };
+  }
+
   private async readGitHub(accessToken: string, resource: ResourceId) {
+    if (resource.type === "repository") {
+      const repository = this.githubRepositoryName(resource.id);
+      const target = new URL(
+        `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}`,
+        GITHUB_API,
+      );
+      const details = await this.json(
+        target,
+        this.githubHeaders(accessToken),
+        githubRepositorySchema,
+      );
+      let readme: string | null = null;
+      try {
+        const response = await this.json(
+          new URL(
+            `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/readme`,
+            GITHUB_API,
+          ),
+          this.githubHeaders(accessToken),
+          githubReadmeSchema,
+        );
+        readme = Buffer.from(
+          response.content.replace(/\s+/g, ""),
+          "base64",
+        ).toString("utf8");
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      }
+      return {
+        operation: "read" as const,
+        capability: "github" as const,
+        item: this.githubRepositoryItem(details, readme),
+      };
+    }
     if (!resource.parentId || !resource.number || resource.type !== "issue") {
       throw this.invalidResource();
     }
@@ -803,6 +1469,48 @@ export class ConnectorAiExecutor {
       capability: "github" as const,
       item: this.githubItem(issue, issue.body || null),
     };
+  }
+
+  private githubRepositoryItem(
+    repository: z.infer<typeof githubRepositorySchema>,
+    content: string | null,
+  ) {
+    return this.item({
+      id: this.encodeResourceId({
+        providerId: "github",
+        capability: "github",
+        type: "repository",
+        id: repository.full_name,
+      }),
+      type: "github_repository",
+      title: repository.full_name,
+      summary: repository.description || null,
+      content,
+      url: repository.html_url,
+      author:
+        repository.owner?.login || repository.full_name.split("/")[0] || null,
+      createdAt: repository.created_at || null,
+      updatedAt: repository.pushed_at || repository.updated_at || null,
+      metadata: {
+        private: repository.private,
+        visibility:
+          repository.visibility || (repository.private ? "private" : "public"),
+        defaultBranch: repository.default_branch || null,
+        language: repository.language || null,
+        stars: repository.stargazers_count || 0,
+      },
+    });
+  }
+
+  private githubRepositoryName(value: string): [string, string] {
+    const parts = value.split("/");
+    if (
+      parts.length !== 2 ||
+      parts.some((part) => !/^[A-Za-z0-9_.-]+$/.test(part || ""))
+    ) {
+      throw this.invalidResource();
+    }
+    return [parts[0]!, parts[1]!];
   }
 
   private githubItem(
@@ -958,7 +1666,7 @@ export class ConnectorAiExecutor {
   private fitOutput(
     result: ConnectorAiExecutionResult,
   ): ConnectorAiExecutionResult {
-    if (result.operation === "search") {
+    if (result.operation === "search" || result.operation === "list") {
       while (
         result.items.length > 0 &&
         Buffer.byteLength(JSON.stringify(result), "utf8") > this.maxOutputBytes
@@ -1094,6 +1802,22 @@ export class ConnectorAiExecutor {
       .join("\n\n");
   }
 
+  private gmailTimestamp(value: string) {
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) {
+      throw new ApiError(
+        400,
+        "connector_time_range_invalid",
+        "The mail time range is invalid.",
+      );
+    }
+    return Math.floor(timestamp / 1_000);
+  }
+
+  private gmailSearchValue(value: string) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+
   private notionTitle(entry: z.infer<typeof notionSearchResultSchema>) {
     if (entry.title?.length)
       return entry.title.map((part) => part.plain_text).join("") || "Untitled";
@@ -1113,6 +1837,113 @@ export class ConnectorAiExecutor {
       if (text) return text;
     }
     return "Untitled";
+  }
+
+  private notionPropertiesText(properties: Record<string, unknown>) {
+    const values: string[] = [];
+    for (const [name, value] of Object.entries(properties)) {
+      if (
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        this.notionRichText((value as Record<string, unknown>).title)
+      ) {
+        continue;
+      }
+      const text = this.notionPropertyText(value);
+      if (text) {
+        values.push(`${name}: ${text}`);
+      }
+    }
+    return values.join(" · ");
+  }
+
+  private notionPropertyText(value: unknown): string {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    const property = value as Record<string, unknown>;
+    const richText = this.notionRichText(property.title || property.rich_text);
+    if (richText) return richText;
+    for (const key of ["status", "select"]) {
+      const selected = property[key];
+      if (
+        selected &&
+        typeof selected === "object" &&
+        !Array.isArray(selected) &&
+        typeof (selected as Record<string, unknown>).name === "string"
+      ) {
+        return String((selected as Record<string, unknown>).name);
+      }
+    }
+    if (Array.isArray(property.multi_select)) {
+      return property.multi_select
+        .map((entry) =>
+          entry && typeof entry === "object" && !Array.isArray(entry)
+            ? (entry as Record<string, unknown>).name
+            : null,
+        )
+        .filter((entry): entry is string => typeof entry === "string")
+        .join(", ");
+    }
+    if (Array.isArray(property.people)) {
+      return property.people
+        .map((person) => {
+          if (!person || typeof person !== "object" || Array.isArray(person)) {
+            return null;
+          }
+          const record = person as Record<string, unknown>;
+          const detail =
+            record.person &&
+            typeof record.person === "object" &&
+            !Array.isArray(record.person)
+              ? (record.person as Record<string, unknown>)
+              : null;
+          return typeof record.name === "string"
+            ? record.name
+            : typeof detail?.email === "string"
+              ? detail.email
+              : null;
+        })
+        .filter((entry): entry is string => Boolean(entry))
+        .join(", ");
+    }
+    if (
+      property.date &&
+      typeof property.date === "object" &&
+      !Array.isArray(property.date)
+    ) {
+      const date = property.date as Record<string, unknown>;
+      return [date.start, date.end]
+        .filter((part) => typeof part === "string")
+        .join(" – ");
+    }
+    for (const key of [
+      "number",
+      "checkbox",
+      "url",
+      "email",
+      "phone_number",
+      "created_time",
+      "last_edited_time",
+    ]) {
+      if (
+        typeof property[key] === "string" ||
+        typeof property[key] === "number" ||
+        typeof property[key] === "boolean"
+      ) {
+        return String(property[key]);
+      }
+    }
+    return "";
+  }
+
+  private notionRichText(value: unknown) {
+    const parsed = notionRichTextSchema.safeParse(value);
+    return parsed.success
+      ? parsed.data
+          .map((part) => part.plain_text)
+          .join("")
+          .trim()
+      : "";
   }
 
   private notionBlockText(blocks: unknown[]) {
@@ -1136,6 +1967,18 @@ export class ConnectorAiExecutor {
     return this.isoTimestamp(seconds * 1000);
   }
 
+  private slackApiTimestamp(value: string) {
+    const milliseconds = Date.parse(value);
+    if (!Number.isFinite(milliseconds)) {
+      throw new ApiError(
+        400,
+        "connector_time_range_invalid",
+        "The Slack time range is invalid.",
+      );
+    }
+    return (milliseconds / 1_000).toFixed(6);
+  }
+
   private isoTimestamp(milliseconds: number) {
     if (!Number.isFinite(milliseconds)) return null;
     const date = new Date(milliseconds);
@@ -1149,6 +1992,17 @@ export class ConnectorAiExecutor {
       mimeType === "application/xml" ||
       mimeType === "application/javascript"
     );
+  }
+
+  private isTextFile(name: string, mimeType: string) {
+    return (
+      this.isTextMime(mimeType) ||
+      /\.(?:drawio|xml|svg|md|markdown|txt|csv|tsv|json|ya?ml)$/i.test(name)
+    );
+  }
+
+  private driveQueryValue(value: string) {
+    return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   }
 
   private truncate(value: string, maxBytes: number) {
