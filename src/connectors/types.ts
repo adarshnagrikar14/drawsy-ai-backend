@@ -367,7 +367,7 @@ export interface ConnectorProvider {
   ): Promise<ConnectorAuthorizationResult>;
   refresh(tokens: ConnectorTokens): Promise<ConnectorTokens>;
   revoke(tokens: ConnectorTokens): Promise<void>;
-  getSetupUrl?(state: string, accountId: string): string;
+  getSetupUrl?(state: string, accountId: string): string | Promise<string>;
   verifySetup?(
     state: string,
     accountId: string,

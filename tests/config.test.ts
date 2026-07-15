@@ -220,14 +220,16 @@ describe("loadConfig", () => {
       AWS_CONNECTOR_PRINCIPAL_ARN:
         "arn:aws:iam::123456789012:role/DrawsyBackendRole",
       AWS_CONNECTOR_TEMPLATE_URL:
-        "https://assets.drawsy.example/aws/read-role.yaml",
+        "https://drawsy-templates.s3.ap-south-1.amazonaws.com/aws/read-role.yaml",
       AWS_CONNECTOR_ROLE_NAME: "DrawsyReadRole",
       AWS_CONNECTOR_SETUP_REGION: "ap-south-1",
     });
 
     expect(config.connectors?.aws).toEqual({
       principalArn: "arn:aws:iam::123456789012:role/DrawsyBackendRole",
-      templateUrl: "https://assets.drawsy.example/aws/read-role.yaml",
+      templateUrl:
+        "https://drawsy-templates.s3.ap-south-1.amazonaws.com/aws/read-role.yaml",
+      templateS3: undefined,
       roleName: "DrawsyReadRole",
       setupRegion: "ap-south-1",
     });
@@ -248,7 +250,7 @@ describe("loadConfig", () => {
         AWS_CONNECTOR_PRINCIPAL_ARN:
           "arn:aws:iam::123456789012:role/DrawsyBackendRole",
       }),
-    ).toThrow("all AWS connector values");
+    ).toThrow("principal ARN and exactly one template source");
     expect(() =>
       loadConfig({
         ...base,
@@ -256,7 +258,32 @@ describe("loadConfig", () => {
           "arn:aws:iam::123456789012:role/DrawsyBackendRole",
         AWS_CONNECTOR_TEMPLATE_URL: "http://assets.example/read-role.yaml",
       }),
-    ).toThrow("AWS_CONNECTOR_TEMPLATE_URL must use HTTPS");
+    ).toThrow("AWS_CONNECTOR_TEMPLATE_URL must be a supported Amazon S3 URL");
+  });
+
+  it("configures a private S3 template signed by the backend", () => {
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      AWS_CONNECTOR_PRINCIPAL_ARN:
+        "arn:aws:iam::123456789012:role/DrawsyBackendRole",
+      AWS_CONNECTOR_TEMPLATE_S3_BUCKET: "drawsy-templates",
+      AWS_CONNECTOR_TEMPLATE_S3_KEY: "aws/read-role.yaml",
+      AWS_CONNECTOR_TEMPLATE_S3_REGION: "ap-south-1",
+    });
+
+    expect(config.connectors?.aws).toMatchObject({
+      templateUrl: undefined,
+      templateS3: {
+        bucket: "drawsy-templates",
+        key: "aws/read-role.yaml",
+        region: "ap-south-1",
+      },
+    });
   });
 
   it("configures a GitHub App installation connector", () => {

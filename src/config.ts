@@ -162,6 +162,9 @@ const environmentSchema = z.object({
   FIREFLIES_MCP_OAUTH_REDIRECT_URI: optionalUrl,
   AWS_CONNECTOR_PRINCIPAL_ARN: optionalText,
   AWS_CONNECTOR_TEMPLATE_URL: optionalUrl,
+  AWS_CONNECTOR_TEMPLATE_S3_BUCKET: optionalText,
+  AWS_CONNECTOR_TEMPLATE_S3_KEY: optionalText,
+  AWS_CONNECTOR_TEMPLATE_S3_REGION: optionalText,
   AWS_CONNECTOR_ROLE_NAME: optionalText,
   AWS_CONNECTOR_SETUP_REGION: optionalText,
   GITHUB_APP_ID: z.coerce.number().int().positive().optional(),
@@ -269,7 +272,12 @@ export type AppConfig = {
     fireflies?: { clientId: string; redirectUri: string };
     aws?: {
       principalArn: string;
-      templateUrl: string;
+      templateUrl?: string;
+      templateS3?: {
+        bucket: string;
+        key: string;
+        region: string;
+      };
       roleName: string;
       setupRegion: string;
     };
@@ -376,10 +384,6 @@ export const loadConfig = (
     parsed.data.FIREFLIES_MCP_OAUTH_CLIENT_ID,
     parsed.data.FIREFLIES_MCP_OAUTH_REDIRECT_URI,
   ];
-  const awsConnectorValues = [
-    parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN,
-    parsed.data.AWS_CONNECTOR_TEMPLATE_URL,
-  ];
   const validateProviderOAuth = (name: string, values: unknown[]) => {
     if (values.some(Boolean) && !values.every(Boolean)) {
       throw new Error(
@@ -399,18 +403,71 @@ export const loadConfig = (
     "Fireflies",
     firefliesOAuthValues,
   );
-  if (awsConnectorValues.some(Boolean) && !awsConnectorValues.every(Boolean)) {
-    throw new Error(
-      "Invalid environment configuration: all AWS connector values must be configured together",
-    );
-  }
-  const hasAwsConnector = awsConnectorValues.every(Boolean);
+  const hasAwsS3Template = Boolean(
+    parsed.data.AWS_CONNECTOR_TEMPLATE_S3_BUCKET,
+  );
+  const awsTemplateSourceCount =
+    Number(Boolean(parsed.data.AWS_CONNECTOR_TEMPLATE_URL)) +
+    Number(hasAwsS3Template);
+  const hasAnyAwsConnectorValue = Boolean(
+    parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN ||
+    awsTemplateSourceCount ||
+    parsed.data.AWS_CONNECTOR_TEMPLATE_S3_KEY ||
+    parsed.data.AWS_CONNECTOR_TEMPLATE_S3_REGION,
+  );
   if (
-    parsed.data.AWS_CONNECTOR_TEMPLATE_URL &&
-    new URL(parsed.data.AWS_CONNECTOR_TEMPLATE_URL).protocol !== "https:"
+    hasAnyAwsConnectorValue &&
+    (!parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN || awsTemplateSourceCount !== 1)
   ) {
     throw new Error(
-      "Invalid environment configuration: AWS_CONNECTOR_TEMPLATE_URL must use HTTPS",
+      "Invalid environment configuration: AWS requires a principal ARN and exactly one template source",
+    );
+  }
+  const hasAwsConnector = Boolean(
+    parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN && awsTemplateSourceCount === 1,
+  );
+  if (parsed.data.AWS_CONNECTOR_TEMPLATE_URL) {
+    const templateUrl = new URL(parsed.data.AWS_CONNECTOR_TEMPLATE_URL);
+    const isSupportedS3Host =
+      templateUrl.protocol === "https:" &&
+      (templateUrl.hostname === "s3.amazonaws.com" ||
+        /^s3[.-][a-z0-9-]+\.amazonaws\.com$/.test(templateUrl.hostname) ||
+        /^[a-z0-9][a-z0-9.-]*\.s3\.[a-z0-9-]+\.amazonaws\.com$/.test(
+          templateUrl.hostname,
+        ));
+    if (!isSupportedS3Host) {
+      throw new Error(
+        "Invalid environment configuration: AWS_CONNECTOR_TEMPLATE_URL must be a supported Amazon S3 URL",
+      );
+    }
+  }
+  const awsTemplateS3Key =
+    parsed.data.AWS_CONNECTOR_TEMPLATE_S3_KEY ||
+    "connectors/aws/aws-connector-read-role.yaml";
+  if (
+    awsTemplateS3Key.startsWith("/") ||
+    awsTemplateS3Key.includes("..") ||
+    awsTemplateS3Key.length > 1_024
+  ) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_TEMPLATE_S3_KEY is invalid",
+    );
+  }
+  const awsTemplateS3Region =
+    parsed.data.AWS_CONNECTOR_TEMPLATE_S3_REGION || "us-east-1";
+  if (!/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/.test(awsTemplateS3Region)) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_TEMPLATE_S3_REGION is invalid",
+    );
+  }
+  if (
+    hasAwsS3Template &&
+    !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(
+      parsed.data.AWS_CONNECTOR_TEMPLATE_S3_BUCKET!,
+    )
+  ) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_TEMPLATE_S3_BUCKET is invalid",
     );
   }
   if (
@@ -623,7 +680,14 @@ export const loadConfig = (
       aws: hasAwsConnector
         ? {
             principalArn: parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN!,
-            templateUrl: parsed.data.AWS_CONNECTOR_TEMPLATE_URL!,
+            templateUrl: parsed.data.AWS_CONNECTOR_TEMPLATE_URL,
+            templateS3: hasAwsS3Template
+              ? {
+                  bucket: parsed.data.AWS_CONNECTOR_TEMPLATE_S3_BUCKET!,
+                  key: awsTemplateS3Key,
+                  region: awsTemplateS3Region,
+                }
+              : undefined,
             roleName: awsRoleName,
             setupRegion: awsSetupRegion,
           }
