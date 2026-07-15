@@ -160,6 +160,10 @@ const environmentSchema = z.object({
   READ_AI_MCP_OAUTH_REDIRECT_URI: optionalUrl,
   FIREFLIES_MCP_OAUTH_CLIENT_ID: optionalText,
   FIREFLIES_MCP_OAUTH_REDIRECT_URI: optionalUrl,
+  AWS_CONNECTOR_PRINCIPAL_ARN: optionalText,
+  AWS_CONNECTOR_TEMPLATE_URL: optionalUrl,
+  AWS_CONNECTOR_ROLE_NAME: optionalText,
+  AWS_CONNECTOR_SETUP_REGION: optionalText,
   GITHUB_APP_ID: z.coerce.number().int().positive().optional(),
   GITHUB_APP_SLUG: optionalText,
   GITHUB_APP_PRIVATE_KEY_BASE64: optionalText,
@@ -263,6 +267,12 @@ export type AppConfig = {
     github?: { appId: number; appSlug: string; privateKey: string };
     readAi?: { clientId: string; redirectUri: string };
     fireflies?: { clientId: string; redirectUri: string };
+    aws?: {
+      principalArn: string;
+      templateUrl: string;
+      roleName: string;
+      setupRegion: string;
+    };
     successUrl: string;
     encryptionKeys: ReadonlyMap<number, Buffer>;
     encryptionKeyVersion: number;
@@ -366,6 +376,10 @@ export const loadConfig = (
     parsed.data.FIREFLIES_MCP_OAUTH_CLIENT_ID,
     parsed.data.FIREFLIES_MCP_OAUTH_REDIRECT_URI,
   ];
+  const awsConnectorValues = [
+    parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN,
+    parsed.data.AWS_CONNECTOR_TEMPLATE_URL,
+  ];
   const validateProviderOAuth = (name: string, values: unknown[]) => {
     if (values.some(Boolean) && !values.every(Boolean)) {
       throw new Error(
@@ -385,6 +399,43 @@ export const loadConfig = (
     "Fireflies",
     firefliesOAuthValues,
   );
+  if (awsConnectorValues.some(Boolean) && !awsConnectorValues.every(Boolean)) {
+    throw new Error(
+      "Invalid environment configuration: all AWS connector values must be configured together",
+    );
+  }
+  const hasAwsConnector = awsConnectorValues.every(Boolean);
+  if (
+    parsed.data.AWS_CONNECTOR_TEMPLATE_URL &&
+    new URL(parsed.data.AWS_CONNECTOR_TEMPLATE_URL).protocol !== "https:"
+  ) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_TEMPLATE_URL must use HTTPS",
+    );
+  }
+  if (
+    parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN &&
+    !/^arn:aws(?:-[a-z]+)?:iam::\d{12}:role\/[A-Za-z0-9+=,.@_/-]{1,512}$/.test(
+      parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN,
+    )
+  ) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_PRINCIPAL_ARN must be an IAM role ARN",
+    );
+  }
+  const awsRoleName =
+    parsed.data.AWS_CONNECTOR_ROLE_NAME || "DrawsyInfrastructureReadRole";
+  if (!/^[A-Za-z0-9+=,.@_-]{1,64}$/.test(awsRoleName)) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_ROLE_NAME is invalid",
+    );
+  }
+  const awsSetupRegion = parsed.data.AWS_CONNECTOR_SETUP_REGION || "us-east-1";
+  if (!/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/.test(awsSetupRegion)) {
+    throw new Error(
+      "Invalid environment configuration: AWS_CONNECTOR_SETUP_REGION is invalid",
+    );
+  }
   const githubPrivateKeySources = [
     parsed.data.GITHUB_APP_PRIVATE_KEY_BASE64,
     parsed.data.GITHUB_APP_PRIVATE_KEY_PATH,
@@ -427,7 +478,8 @@ export const loadConfig = (
     hasSlackOAuth ||
     hasGithubApp ||
     hasReadAiOAuth ||
-    hasFirefliesOAuth;
+    hasFirefliesOAuth ||
+    hasAwsConnector;
   if (
     hasAnyConnectorProvider &&
     parsed.data.NODE_ENV === "production" &&
@@ -566,6 +618,14 @@ export const loadConfig = (
         ? {
             clientId: parsed.data.FIREFLIES_MCP_OAUTH_CLIENT_ID!,
             redirectUri: parsed.data.FIREFLIES_MCP_OAUTH_REDIRECT_URI!,
+          }
+        : undefined,
+      aws: hasAwsConnector
+        ? {
+            principalArn: parsed.data.AWS_CONNECTOR_PRINCIPAL_ARN!,
+            templateUrl: parsed.data.AWS_CONNECTOR_TEMPLATE_URL!,
+            roleName: awsRoleName,
+            setupRegion: awsSetupRegion,
           }
         : undefined,
       successUrl:

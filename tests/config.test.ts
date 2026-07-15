@@ -64,6 +64,9 @@ describe("loadConfig", () => {
         notion: undefined,
         slack: undefined,
         github: undefined,
+        readAi: undefined,
+        fireflies: undefined,
+        aws: undefined,
         successUrl: "http://localhost:3001/connectors-oauth-complete.html",
         encryptionKeys: new Map([[1, Buffer.alloc(32, 1)]]),
         encryptionKeyVersion: 1,
@@ -138,6 +141,9 @@ describe("loadConfig", () => {
       notion: undefined,
       slack: undefined,
       github: undefined,
+      readAi: undefined,
+      fireflies: undefined,
+      aws: undefined,
       successUrl: "http://localhost:3001",
       encryptionKeys: new Map([[1, encryptionKey]]),
       encryptionKeyVersion: 1,
@@ -201,6 +207,56 @@ describe("loadConfig", () => {
         READ_AI_MCP_OAUTH_CLIENT_ID: "read-client",
       }),
     ).toThrow("all Read AI connector OAuth values");
+  });
+
+  it("configures the AWS cross-account connector as one unit", () => {
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      AWS_CONNECTOR_PRINCIPAL_ARN:
+        "arn:aws:iam::123456789012:role/DrawsyBackendRole",
+      AWS_CONNECTOR_TEMPLATE_URL:
+        "https://assets.drawsy.example/aws/read-role.yaml",
+      AWS_CONNECTOR_ROLE_NAME: "DrawsyReadRole",
+      AWS_CONNECTOR_SETUP_REGION: "ap-south-1",
+    });
+
+    expect(config.connectors?.aws).toEqual({
+      principalArn: "arn:aws:iam::123456789012:role/DrawsyBackendRole",
+      templateUrl: "https://assets.drawsy.example/aws/read-role.yaml",
+      roleName: "DrawsyReadRole",
+      setupRegion: "ap-south-1",
+    });
+  });
+
+  it("rejects partial or insecure AWS connector configuration", () => {
+    const base = {
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+    };
+    expect(() =>
+      loadConfig({
+        ...base,
+        AWS_CONNECTOR_PRINCIPAL_ARN:
+          "arn:aws:iam::123456789012:role/DrawsyBackendRole",
+      }),
+    ).toThrow("all AWS connector values");
+    expect(() =>
+      loadConfig({
+        ...base,
+        AWS_CONNECTOR_PRINCIPAL_ARN:
+          "arn:aws:iam::123456789012:role/DrawsyBackendRole",
+        AWS_CONNECTOR_TEMPLATE_URL: "http://assets.example/read-role.yaml",
+      }),
+    ).toThrow("AWS_CONNECTOR_TEMPLATE_URL must use HTTPS");
   });
 
   it("configures a GitHub App installation connector", () => {

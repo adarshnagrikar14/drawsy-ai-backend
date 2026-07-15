@@ -95,6 +95,76 @@ export class DefaultConnectorService implements ConnectorService {
     };
   }
 
+  async getSetupUrl(
+    userId: string,
+    providerId: ConnectorProviderId,
+    accountId: string,
+  ) {
+    const provider = this.provider(providerId);
+    if (!provider.getSetupUrl || !provider.verifySetup) {
+      throw new ApiError(
+        400,
+        "connector_setup_flow_invalid",
+        "This connector does not use a guided account setup.",
+      );
+    }
+    const { state, attemptId } = await this.store.createOAuthState(
+      userId,
+      providerId,
+      Date.now() + this.config.stateTtlMs,
+    );
+    return {
+      setupUrl: provider.getSetupUrl(state, accountId),
+      attemptId,
+      setupToken: state,
+    };
+  }
+
+  async verifySetup(
+    userId: string,
+    providerId: ConnectorProviderId,
+    accountId: string,
+    setupToken: string,
+  ) {
+    const provider = this.provider(providerId);
+    if (!provider.verifySetup) {
+      throw new ApiError(
+        400,
+        "connector_setup_flow_invalid",
+        "This connector does not use a guided account setup.",
+      );
+    }
+    const pendingState = await this.store.getOAuthState(setupToken, providerId);
+    if (pendingState.userId !== userId) {
+      throw new ApiError(
+        403,
+        "connector_setup_forbidden",
+        "This connector setup belongs to another user.",
+      );
+    }
+    const authorization = await provider.verifySetup(setupToken, accountId);
+    if (!authorization) return { status: "pending" as const };
+    const state = await this.store.consumeOAuthState(setupToken, providerId);
+    if (state.userId !== userId)
+      throw new Error("Connector state owner changed");
+    try {
+      await this.saveAuthorization(userId, providerId, authorization);
+      await this.store.setOAuthAttemptStatus(state.attemptId, {
+        status: "connected",
+      });
+      return { status: "connected" as const };
+    } catch (error) {
+      await this.store.setOAuthAttemptStatus(state.attemptId, {
+        status: "failed",
+        error:
+          error instanceof Error && "code" in error
+            ? String(error.code)
+            : "setup_failed",
+      });
+      throw error;
+    }
+  }
+
   async completeAuthorization(
     providerId: ConnectorProviderId,
     code: string,

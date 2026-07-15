@@ -97,6 +97,41 @@ export class FirestoreConnectorConnectionStore implements ConnectorConnectionSto
     });
   }
 
+  async getOAuthState(state: string, providerId: ConnectorProviderId) {
+    const snapshot = await this.firestore
+      .collection("connectorOAuthStates")
+      .doc(digest(state))
+      .get();
+    const data = snapshot.data() as
+      | {
+          userId?: string;
+          providerId?: string;
+          attemptId?: string;
+          expiresAt?: number;
+          codeVerifier?: string;
+        }
+      | undefined;
+    if (
+      !snapshot.exists ||
+      !data?.userId ||
+      data.providerId !== providerId ||
+      !data.attemptId ||
+      !data.expiresAt ||
+      data.expiresAt <= Date.now()
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_oauth_state",
+        "Connector setup state is invalid or expired.",
+      );
+    }
+    return {
+      userId: data.userId,
+      attemptId: data.attemptId,
+      ...(data.codeVerifier ? { codeVerifier: data.codeVerifier } : {}),
+    };
+  }
+
   async setOAuthAttemptStatus(
     attemptId: string,
     status: ConnectorOAuthAttemptStatus,

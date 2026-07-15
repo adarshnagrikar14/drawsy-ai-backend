@@ -73,6 +73,11 @@ const store = (
     attemptId: "attempt-1",
     codeVerifier: "verifier",
   }),
+  getOAuthState: vi.fn().mockResolvedValue({
+    userId: "user-1",
+    attemptId: "attempt-1",
+    codeVerifier: "verifier",
+  }),
   setOAuthAttemptStatus: vi.fn().mockResolvedValue(undefined),
   getOAuthAttemptStatus: vi.fn().mockResolvedValue({ status: "pending" }),
   listConnections: vi.fn().mockResolvedValue([]),
@@ -128,6 +133,7 @@ describe("DefaultConnectorService", () => {
       { id: "github", configured: false },
       { id: "read-ai", configured: false },
       { id: "fireflies", configured: false },
+      { id: "aws", configured: false },
     ]);
     expect(listConnections).toHaveBeenCalledWith("user-1");
   });
@@ -252,6 +258,64 @@ describe("DefaultConnectorService", () => {
       accountName: "adarsh",
       manageUrl: "https://github.com/settings/installations/42",
       capabilities: ["github"],
+    });
+  });
+
+  it("completes guided AWS setup only for the owning user", async () => {
+    const getSetupUrl = vi.fn(() => "https://console.aws.amazon.com/setup");
+    const verifySetup = vi.fn().mockResolvedValue({
+      account: {
+        id: "123456789012",
+        name: "AWS account 123456789012",
+        email: null,
+        avatarUrl: null,
+      },
+      tokens: tokens({
+        accessToken: "encrypted-role-descriptor",
+        refreshToken: null,
+        expiresAt: null,
+        scopes: ["infrastructure:read"],
+      }),
+      capabilities: ["aws"],
+    });
+    const saveConnection = vi
+      .fn<ConnectorConnectionStore["saveConnection"]>()
+      .mockResolvedValue(undefined);
+    const connectionStore = store({ saveConnection });
+    const service = new DefaultConnectorService(
+      config,
+      [
+        provider({
+          summary: {
+            id: "aws",
+            name: "AWS",
+            capabilities: ["aws"],
+            executionMode: "provider_api",
+            availability: "preview",
+          },
+          supportsPkce: false,
+          getSetupUrl,
+          verifySetup,
+        }),
+      ],
+      connectionStore,
+    );
+
+    await expect(
+      service.getSetupUrl("user-1", "aws", "123456789012"),
+    ).resolves.toMatchObject({
+      setupUrl: "https://console.aws.amazon.com/setup",
+      attemptId: "attempt-1",
+      setupToken: "state",
+    });
+    await expect(
+      service.verifySetup("user-1", "aws", "123456789012", "state"),
+    ).resolves.toEqual({ status: "connected" });
+    expect(verifySetup).toHaveBeenCalledWith("state", "123456789012");
+    expect(saveConnection.mock.calls[0]?.[1]).toMatchObject({
+      providerId: "aws",
+      accountId: "123456789012",
+      capabilities: ["aws"],
     });
   });
 

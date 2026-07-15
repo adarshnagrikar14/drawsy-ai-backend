@@ -43,4 +43,11 @@ export const connectorProviderCatalog = [
     executionMode: "remote_mcp",
     availability: "stable",
   },
+  {
+    id: "aws",
+    name: "AWS",
+    capabilities: ["aws"],
+    executionMode: "provider_api",
+    availability: "preview",
+  },
 ] as const satisfies readonly ConnectorProviderDefinition[];

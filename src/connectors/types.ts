@@ -5,6 +5,7 @@ export const connectorProviderIds = [
   "github",
   "read-ai",
   "fireflies",
+  "aws",
 ] as const;
 
 export type ConnectorProviderId = (typeof connectorProviderIds)[number];
@@ -16,7 +17,8 @@ export type ConnectorCapability =
   | "slack"
   | "github"
   | "read-ai"
-  | "fireflies";
+  | "fireflies"
+  | "aws";
 
 export type ConnectorProviderDefinition = {
   id: ConnectorProviderId;
@@ -95,7 +97,7 @@ export type ConnectorAiExecutionRequest = {
 } & (
   | {
       operation: "search";
-      capability: ConnectorCapability;
+      capability: Exclude<ConnectorCapability, "aws">;
       query: string;
       cursor?: string;
       limit?: number;
@@ -232,6 +234,27 @@ export type ConnectorAiExecutionRequest = {
       toolName: string;
       arguments: Record<string, unknown>;
     }
+  | {
+      operation: "list";
+      capability: "aws";
+      kind: "aws_regions";
+    }
+  | {
+      operation: "list";
+      capability: "aws";
+      kind: "aws_cloudformation_stacks";
+      region: string;
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "search";
+      capability: "aws";
+      query: string;
+      region: string;
+      cursor?: string;
+      limit?: number;
+    }
 );
 
 export type ConnectorAiItem = {
@@ -268,7 +291,9 @@ export type ConnectorAiExecutionResult =
         | "github_issues"
         | "github_pull_requests"
         | "slack_channels"
-        | "slack_messages";
+        | "slack_messages"
+        | "aws_regions"
+        | "aws_cloudformation_stacks";
       items: ConnectorAiItem[];
       nextCursor: string | null;
     }
@@ -305,6 +330,10 @@ export interface ConnectorConnectionStore {
     state: string,
     providerId: ConnectorProviderId,
   ): Promise<{ userId: string; attemptId: string; codeVerifier?: string }>;
+  getOAuthState(
+    state: string,
+    providerId: ConnectorProviderId,
+  ): Promise<{ userId: string; attemptId: string; codeVerifier?: string }>;
   setOAuthAttemptStatus(
     attemptId: string,
     status: ConnectorOAuthAttemptStatus,
@@ -338,6 +367,11 @@ export interface ConnectorProvider {
   ): Promise<ConnectorAuthorizationResult>;
   refresh(tokens: ConnectorTokens): Promise<ConnectorTokens>;
   revoke(tokens: ConnectorTokens): Promise<void>;
+  getSetupUrl?(state: string, accountId: string): string;
+  verifySetup?(
+    state: string,
+    accountId: string,
+  ): Promise<ConnectorAuthorizationResult | null>;
 }
 
 export interface ConnectorService {
@@ -367,6 +401,17 @@ export interface ConnectorService {
   getAuthorizationStatus(
     userId: string,
     attemptId: string,
+  ): Promise<ConnectorOAuthAttemptStatus>;
+  getSetupUrl(
+    userId: string,
+    providerId: ConnectorProviderId,
+    accountId: string,
+  ): Promise<{ setupUrl: string; attemptId: string; setupToken: string }>;
+  verifySetup(
+    userId: string,
+    providerId: ConnectorProviderId,
+    accountId: string,
+    setupToken: string,
   ): Promise<ConnectorOAuthAttemptStatus>;
   deleteConnection(userId: string, connectionId: string): Promise<void>;
   getAuthorizedCredential(
