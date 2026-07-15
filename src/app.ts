@@ -145,7 +145,7 @@ export const createApp = ({
   app.use(
     (
       error: unknown,
-      _request: Request,
+      request: Request,
       response: Response,
       _next: NextFunction,
     ) => {
@@ -211,7 +211,12 @@ export const createApp = ({
           level: "error",
           message: "request_failed",
           requestId: response.locals.requestId,
+          method: request.method,
+          path: request.path,
+          contentType: request.get("content-type"),
+          contentLength: request.get("content-length"),
           error: error instanceof Error ? error.message : "Unknown error",
+          stack: error instanceof Error ? error.stack : undefined,
         }),
       );
       response.status(500).json({
