@@ -310,6 +310,58 @@ const githubIssueSchema = z
     labels: z
       .array(z.union([z.string(), z.object({ name: z.string().optional() })]))
       .optional(),
+    comments: z.number().int().nonnegative().optional(),
+    closed_at: z.string().nullable().optional(),
+    assignees: z
+      .array(z.object({ login: z.string().min(1) }).passthrough())
+      .optional(),
+  })
+  .passthrough();
+const githubContentEntrySchema = z
+  .object({
+    name: z.string().min(1),
+    path: z.string().min(1),
+    sha: z.string().min(1),
+    size: z.number().int().nonnegative().optional(),
+    type: z.enum(["file", "dir", "symlink", "submodule"]),
+    html_url: z.string().url().nullable().optional(),
+    submodule_git_url: z.string().nullable().optional(),
+    target: z.string().optional(),
+  })
+  .passthrough();
+const githubContentsSchema = z.union([
+  z.array(githubContentEntrySchema),
+  githubContentEntrySchema,
+]);
+const githubPullRequestSchema = z
+  .object({
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string().nullable().optional(),
+    html_url: z.string().url(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    closed_at: z.string().nullable().optional(),
+    merged_at: z.string().nullable().optional(),
+    state: z.string(),
+    draft: z.boolean().optional(),
+    user: z
+      .object({ login: z.string().min(1) })
+      .nullable()
+      .optional(),
+    head: z.object({ ref: z.string(), sha: z.string().optional() }),
+    base: z.object({ ref: z.string(), sha: z.string().optional() }),
+    labels: z
+      .array(z.union([z.string(), z.object({ name: z.string().optional() })]))
+      .optional(),
+    comments: z.number().int().nonnegative().optional(),
+    review_comments: z.number().int().nonnegative().optional(),
+    commits: z.number().int().nonnegative().optional(),
+    additions: z.number().int().nonnegative().optional(),
+    deletions: z.number().int().nonnegative().optional(),
+    changed_files: z.number().int().nonnegative().optional(),
+    merged: z.boolean().optional(),
+    mergeable: z.boolean().nullable().optional(),
   })
   .passthrough();
 
@@ -352,6 +404,12 @@ export class ConnectorAiExecutor {
         return this.listNotionContent(accessToken, request);
       case "github_repositories":
         return this.listGitHubRepositories(accessToken, request);
+      case "github_repository_contents":
+        return this.listGitHubRepositoryContents(accessToken, request);
+      case "github_issues":
+        return this.listGitHubIssues(accessToken, request);
+      case "github_pull_requests":
+        return this.listGitHubPullRequests(accessToken, request);
       case "slack_channels":
         return this.listSlackChannels(accessToken, request);
       case "slack_messages":
@@ -1429,6 +1487,126 @@ export class ConnectorAiExecutor {
     };
   }
 
+  private async listGitHubRepositoryContents(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "github_repository_contents" }
+    >,
+  ) {
+    const repository = this.githubRepositoryName(request.repository);
+    await this.assertGitHubRepositoryAccess(accessToken, repository);
+    const page = request.cursor ? Number(request.cursor) : 1;
+    if (!Number.isInteger(page) || page < 1) throw this.invalidCursor();
+    const limit = request.limit || 100;
+    const path = this.githubRepositoryPath(request.path || "");
+    const target = this.githubContentsUrl(repository, path, request.ref);
+    const result = await this.json(
+      target,
+      this.githubHeaders(accessToken),
+      githubContentsSchema,
+    );
+    if (!Array.isArray(result)) {
+      throw new ApiError(
+        400,
+        "connector_github_path_not_directory",
+        "Use read_connected_item for a file; repository contents can only list directories.",
+      );
+    }
+    const start = (page - 1) * limit;
+    const entries = result.slice(start, start + limit);
+    return {
+      operation: "list" as const,
+      capability: "github" as const,
+      kind: "github_repository_contents" as const,
+      items: entries.map((entry) =>
+        this.githubContentItem(request.repository, entry, request.ref || null),
+      ),
+      nextCursor:
+        start + entries.length < result.length ? String(page + 1) : null,
+    };
+  }
+
+  private async listGitHubIssues(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "github_issues" }
+    >,
+  ) {
+    const repository = this.githubRepositoryName(request.repository);
+    await this.assertGitHubRepositoryAccess(accessToken, repository);
+    const page = request.cursor ? Number(request.cursor) : 1;
+    if (!Number.isInteger(page) || page < 1) throw this.invalidCursor();
+    const limit = request.limit || 30;
+    const target = new URL(
+      `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/issues`,
+      GITHUB_API,
+    );
+    target.searchParams.set("state", request.state || "open");
+    target.searchParams.set("sort", request.sort || "updated");
+    target.searchParams.set("direction", request.direction || "desc");
+    target.searchParams.set("per_page", String(limit));
+    target.searchParams.set("page", String(page));
+    if (request.labels?.length) {
+      target.searchParams.set("labels", request.labels.join(","));
+    }
+    if (request.since) target.searchParams.set("since", request.since);
+    const result = await this.json(
+      target,
+      this.githubHeaders(accessToken),
+      z.array(githubIssueSchema),
+    );
+    return {
+      operation: "list" as const,
+      capability: "github" as const,
+      kind: "github_issues" as const,
+      items: result
+        .filter((issue) => !issue.pull_request)
+        .map((issue) => this.githubItem(issue, null)),
+      nextCursor: result.length === limit ? String(page + 1) : null,
+    };
+  }
+
+  private async listGitHubPullRequests(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "github_pull_requests" }
+    >,
+  ) {
+    const repository = this.githubRepositoryName(request.repository);
+    await this.assertGitHubRepositoryAccess(accessToken, repository);
+    const page = request.cursor ? Number(request.cursor) : 1;
+    if (!Number.isInteger(page) || page < 1) throw this.invalidCursor();
+    const limit = request.limit || 30;
+    const target = new URL(
+      `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/pulls`,
+      GITHUB_API,
+    );
+    target.searchParams.set("state", request.state || "open");
+    target.searchParams.set("sort", request.sort || "updated");
+    target.searchParams.set("direction", request.direction || "desc");
+    target.searchParams.set("per_page", String(limit));
+    target.searchParams.set("page", String(page));
+    if (request.head) target.searchParams.set("head", request.head);
+    if (request.base) target.searchParams.set("base", request.base);
+    const result = await this.json(
+      target,
+      this.githubHeaders(accessToken),
+      z.array(githubPullRequestSchema),
+    );
+    return {
+      operation: "list" as const,
+      capability: "github" as const,
+      kind: "github_pull_requests" as const,
+      items: result.map((pullRequest) =>
+        this.githubPullRequestItem(request.repository, pullRequest, null),
+      ),
+      nextCursor: result.length === limit ? String(page + 1) : null,
+    };
+  }
+
   private async readGitHub(accessToken: string, resource: ResourceId) {
     if (resource.type === "repository") {
       const repository = this.githubRepositoryName(resource.id);
@@ -1461,24 +1639,70 @@ export class ConnectorAiExecutor {
         item: this.githubRepositoryItem(details, readme),
       };
     }
-    if (!resource.parentId || !resource.number || resource.type !== "issue") {
-      throw this.invalidResource();
+    if (resource.type === "file" && resource.parentId) {
+      const repository = this.githubRepositoryName(resource.parentId);
+      const path = this.githubRepositoryPath(resource.id);
+      await this.assertGitHubRepositoryAccess(accessToken, repository);
+      const content = await this.text(
+        this.githubContentsUrl(repository, path, resource.ref),
+        this.githubHeaders(accessToken, "application/vnd.github.raw+json"),
+        true,
+        true,
+      );
+      return {
+        operation: "read" as const,
+        capability: "github" as const,
+        item: this.item({
+          id: this.encodeResourceId(resource),
+          type: "github_file",
+          title: path,
+          summary: `File in ${resource.parentId}`,
+          content,
+          url: this.githubFileUrl(resource.parentId, path, resource.ref),
+          author: null,
+          createdAt: null,
+          updatedAt: null,
+          metadata: {
+            repository: resource.parentId,
+            path,
+            ref: resource.ref || null,
+          },
+        }),
+      };
     }
-    const repository = resource.parentId.split("/");
     if (
-      repository.length !== 2 ||
-      repository.some((part) => !/^[A-Za-z0-9_.-]+$/.test(part || ""))
+      !resource.parentId ||
+      !resource.number ||
+      (resource.type !== "issue" && resource.type !== "pull_request")
     ) {
       throw this.invalidResource();
     }
+    const repository = this.githubRepositoryName(resource.parentId);
+    await this.assertGitHubRepositoryAccess(accessToken, repository);
+    if (resource.type === "pull_request") {
+      const target = new URL(
+        `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/pulls/${resource.number}`,
+        GITHUB_API,
+      );
+      const pullRequest = await this.json(
+        target,
+        this.githubHeaders(accessToken),
+        githubPullRequestSchema,
+      );
+      return {
+        operation: "read" as const,
+        capability: "github" as const,
+        item: this.githubPullRequestItem(
+          resource.parentId,
+          pullRequest,
+          pullRequest.body || null,
+        ),
+      };
+    }
     const target = new URL(
-      `/repos/${encodeURIComponent(repository[0]!)}/${encodeURIComponent(repository[1]!)}/issues/${resource.number}`,
+      `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/issues/${resource.number}`,
       GITHUB_API,
     );
-    await this.assertGitHubRepositoryAccess(accessToken, [
-      repository[0]!,
-      repository[1]!,
-    ]);
     const issue = await this.json(
       target,
       this.githubHeaders(accessToken),
@@ -1518,6 +1742,96 @@ export class ConnectorAiExecutor {
         defaultBranch: repository.default_branch || null,
         language: repository.language || null,
         stars: repository.stargazers_count || 0,
+      },
+    });
+  }
+
+  private githubContentItem(
+    repository: string,
+    entry: z.infer<typeof githubContentEntrySchema>,
+    ref: string | null,
+  ) {
+    const isFile = entry.type === "file" || entry.type === "symlink";
+    return this.item({
+      id: this.encodeResourceId({
+        providerId: "github",
+        capability: "github",
+        type: isFile ? "file" : entry.type,
+        id: entry.path,
+        parentId: repository,
+        ...(ref ? { ref } : {}),
+      }),
+      type: `github_${entry.type === "dir" ? "directory" : entry.type}`,
+      title: entry.path,
+      summary:
+        entry.type === "dir"
+          ? "Directory"
+          : entry.type === "submodule"
+            ? `Submodule${entry.submodule_git_url ? `: ${entry.submodule_git_url}` : ""}`
+            : entry.type === "symlink"
+              ? `Symbolic link${entry.target ? ` to ${entry.target}` : ""}`
+              : "Repository file",
+      content: null,
+      url: entry.html_url || null,
+      author: null,
+      createdAt: null,
+      updatedAt: null,
+      metadata: {
+        repository,
+        path: entry.path,
+        name: entry.name,
+        ref,
+        sha: entry.sha,
+        size: entry.size ?? null,
+        entryType: entry.type,
+        readable: isFile,
+      },
+    });
+  }
+
+  private githubPullRequestItem(
+    repository: string,
+    pullRequest: z.infer<typeof githubPullRequestSchema>,
+    content: string | null,
+  ) {
+    const labels = (pullRequest.labels || [])
+      .map((label) => (typeof label === "string" ? label : label.name))
+      .filter((label): label is string => Boolean(label));
+    return this.item({
+      id: this.encodeResourceId({
+        providerId: "github",
+        capability: "github",
+        type: "pull_request",
+        id: String(pullRequest.number),
+        parentId: repository,
+        number: pullRequest.number,
+      }),
+      type: "github_pull_request",
+      title: pullRequest.title,
+      summary: pullRequest.body || null,
+      content,
+      url: pullRequest.html_url,
+      author: pullRequest.user?.login || null,
+      createdAt: pullRequest.created_at,
+      updatedAt: pullRequest.updated_at,
+      metadata: {
+        repository,
+        number: pullRequest.number,
+        state: pullRequest.state,
+        draft: pullRequest.draft || false,
+        merged: pullRequest.merged ?? Boolean(pullRequest.merged_at),
+        mergeable: pullRequest.mergeable ?? null,
+        head: pullRequest.head.ref,
+        base: pullRequest.base.ref,
+        labels: labels.join(", ") || null,
+        comments: pullRequest.comments ?? null,
+        reviewComments: pullRequest.review_comments ?? null,
+        commits: pullRequest.commits ?? null,
+        additions: pullRequest.additions ?? null,
+        deletions: pullRequest.deletions ?? null,
+        changedFiles: pullRequest.changed_files ?? null,
+        closedAt: pullRequest.closed_at || null,
+        mergedAt: pullRequest.merged_at || null,
       },
     });
   }
@@ -1596,6 +1910,49 @@ export class ConnectorAiExecutor {
     return [parts[0]!, parts[1]!];
   }
 
+  private githubRepositoryPath(value: string) {
+    const path = value.replace(/\/+$/g, "");
+    if (
+      path.startsWith("/") ||
+      path.length > 2_048 ||
+      path.split("/").some((part) => !part || part === ".." || part === ".") ||
+      [...path].some((character) => {
+        const code = character.charCodeAt(0);
+        return code <= 31 || code === 127;
+      })
+    ) {
+      if (!path) return "";
+      throw this.invalidResource();
+    }
+    return path;
+  }
+
+  private githubContentsUrl(
+    repository: [string, string],
+    path: string,
+    ref?: string,
+  ) {
+    const encodedPath = path
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    const target = new URL(
+      `/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}/contents${encodedPath ? `/${encodedPath}` : ""}`,
+      GITHUB_API,
+    );
+    if (ref) target.searchParams.set("ref", ref);
+    return target;
+  }
+
+  private githubFileUrl(repository: string, path: string, ref?: string) {
+    const encodedPath = path
+      .split("/")
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    return `https://github.com/${repository}/blob/${encodeURIComponent(ref || "HEAD")}/${encodedPath}`;
+  }
+
   private githubItem(
     issue: z.infer<typeof githubIssueSchema>,
     content: string | null,
@@ -1625,8 +1982,13 @@ export class ConnectorAiExecutor {
       updatedAt: issue.updated_at,
       metadata: {
         repository,
+        number: issue.number,
         state: issue.state,
         labels: labels.join(", ") || null,
+        comments: issue.comments ?? null,
+        assignees:
+          issue.assignees?.map((assignee) => assignee.login).join(", ") || null,
+        closedAt: issue.closed_at || null,
       },
     });
   }
@@ -1652,14 +2014,21 @@ export class ConnectorAiExecutor {
     target: URL,
     init: RequestInit,
     truncateOversizedResponse = false,
+    rejectBinaryResponse = false,
   ) {
-    return this.request(target, init, truncateOversizedResponse);
+    return this.request(
+      target,
+      init,
+      truncateOversizedResponse,
+      rejectBinaryResponse,
+    );
   }
 
   private async request(
     target: URL,
     init: RequestInit,
     truncateOversizedResponse = false,
+    rejectBinaryResponse = false,
   ) {
     if (
       target.protocol !== "https:" ||
@@ -1741,6 +2110,7 @@ export class ConnectorAiExecutor {
         await reader.cancel();
         if (truncateOversizedResponse) {
           const combined = Buffer.concat([...chunks, value]);
+          if (rejectBinaryResponse) this.assertTextSource(combined);
           return `${this.truncate(
             combined.toString("utf8"),
             Math.max(
@@ -1754,7 +2124,31 @@ export class ConnectorAiExecutor {
       }
       chunks.push(value);
     }
-    return Buffer.concat(chunks, total).toString("utf8");
+    const combined = Buffer.concat(chunks, total);
+    if (rejectBinaryResponse) this.assertTextSource(combined);
+    return combined.toString("utf8");
+  }
+
+  private assertTextSource(content: Buffer) {
+    const sample = content.subarray(0, Math.min(content.length, 8_192));
+    if (sample.includes(0)) {
+      throw new ApiError(
+        415,
+        "connector_resource_unsupported",
+        "This repository file is binary and cannot be read as text.",
+      );
+    }
+    let suspicious = 0;
+    for (const byte of sample) {
+      if (byte < 9 || (byte > 13 && byte < 32)) suspicious += 1;
+    }
+    if (sample.length > 0 && suspicious / sample.length > 0.01) {
+      throw new ApiError(
+        415,
+        "connector_resource_unsupported",
+        "This repository file is binary and cannot be read as text.",
+      );
+    }
   }
 
   private item(item: ConnectorAiItem): ConnectorAiItem {

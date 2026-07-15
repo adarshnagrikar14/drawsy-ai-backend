@@ -44,7 +44,7 @@ the Excalidraw editor core.
 - `GET /v1/connectors/:providerId/oauth/callback` - public OAuth callback
 - `DELETE /v1/connectors/connections/:connectionId` - revokes and removes access
 - `POST /v1/connectors/ai/grants` - mints a short-lived, user-authenticated connector grant for one local AI turn
-- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only keyword `search`, provider-aware `list`, or item `read` against a connected provider
+- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only keyword `search`, provider-aware `list`, or item `read` against a connected provider; GitHub supports selected repositories, directory contents, exact text files, issues, and pull requests
 
 The connector control plane owns OAuth, encrypted credentials, account-scoped
 permissions, refresh, and revocation for Google Workspace, Notion, Slack, and
@@ -88,6 +88,20 @@ Provider applications must be registered before their cards become available:
   GitHub's installation screen.
 
 Use HTTPS callback/success URLs and a deployment secret manager in production.
+
+### Drawsy AI resources
+
+- `POST /v1/ai/resources/grants` - mints a short-lived, user-authenticated grant for tagged first-party resources
+- `POST /v1/ai/resources/execute` - executes grant-scoped Kanban or Jira tools for the exact local AI session and turn
+
+`@kanban` exposes board reads plus semantic card, checklist, move, and
+current-canvas-link operations. Every mutation still passes through the normal
+Kanban membership, lock, encryption, revision, idempotency, and audit path.
+`@jira` exposes permission-filtered connections, projects, issues, boards,
+sprints, and backlog reads through Atlassian's existing OAuth service; it does
+not expose Jira writes. Resource grants are signed in a separate cryptographic
+domain, contain no Firebase or provider credentials, expire after the configured
+AI grant lifetime, and are discarded by the local bridge when the turn ends.
 Configure Firestore TTL on `deleteAt` for the `connectorOAuthStates` and
 `connectorOAuthAttempts` collection groups.
 

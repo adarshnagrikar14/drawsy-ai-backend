@@ -157,6 +157,42 @@ export type ConnectorAiExecutionRequest = {
     }
   | {
       operation: "list";
+      capability: "github";
+      kind: "github_repository_contents";
+      repository: string;
+      path?: string;
+      ref?: string;
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "github";
+      kind: "github_issues";
+      repository: string;
+      state?: "open" | "closed" | "all";
+      labels?: string[];
+      since?: string;
+      sort?: "created" | "updated" | "comments";
+      direction?: "asc" | "desc";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
+      capability: "github";
+      kind: "github_pull_requests";
+      repository: string;
+      state?: "open" | "closed" | "all";
+      head?: string;
+      base?: string;
+      sort?: "created" | "updated" | "popularity" | "long-running";
+      direction?: "asc" | "desc";
+      cursor?: string;
+      limit?: number;
+    }
+  | {
+      operation: "list";
       capability: "slack";
       kind: "slack_channels";
       cursor?: string;
@@ -209,6 +245,9 @@ export type ConnectorAiExecutionResult =
         | "drive_files"
         | "notion_content"
         | "github_repositories"
+        | "github_repository_contents"
+        | "github_issues"
+        | "github_pull_requests"
         | "slack_channels"
         | "slack_messages";
       items: ConnectorAiItem[];

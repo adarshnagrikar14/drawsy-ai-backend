@@ -768,6 +768,271 @@ describe("ConnectorAiExecutor", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("browses and reads selected GitHub repository files, issues, and pull requests", async () => {
+    const repository = {
+      id: 1,
+      name: "drawsy",
+      full_name: "adarsh/drawsy",
+      html_url: "https://github.com/adarsh/drawsy",
+      description: "Canvas agent",
+      private: true,
+      default_branch: "main",
+      owner: { login: "adarsh" },
+    };
+    const pullRequest = {
+      number: 12,
+      title: "Improve connector tools",
+      body: "Pull request details",
+      html_url: "https://github.com/adarsh/drawsy/pull/12",
+      created_at: "2026-07-10T00:00:00Z",
+      updated_at: "2026-07-14T00:00:00Z",
+      state: "open",
+      draft: false,
+      user: { login: "adarsh" },
+      head: { ref: "github-tools", sha: "head-sha" },
+      base: { ref: "main", sha: "base-sha" },
+      labels: [{ name: "connectors" }],
+      comments: 2,
+      review_comments: 3,
+      commits: 4,
+      additions: 120,
+      deletions: 10,
+      changed_files: 5,
+      merged: false,
+      mergeable: true,
+    };
+    const requested: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL, init?: RequestInit) => {
+        const target = new URL(String(input));
+        requested.push(target);
+        if (target.pathname === "/installation/repositories") {
+          return Promise.resolve(
+            json({ total_count: 1, repositories: [repository] }),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/contents/src") {
+          expect(target.searchParams.get("ref")).toBe("feature/connectors");
+          return Promise.resolve(
+            json([
+              {
+                name: "connectors",
+                path: "src/connectors",
+                sha: "tree-sha",
+                type: "dir",
+                html_url:
+                  "https://github.com/adarsh/drawsy/tree/feature/connectors/src/connectors",
+              },
+              {
+                name: "index.ts",
+                path: "src/index.ts",
+                sha: "file-sha",
+                size: 42,
+                type: "file",
+                html_url:
+                  "https://github.com/adarsh/drawsy/blob/feature/connectors/src/index.ts",
+              },
+            ]),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/contents/src/index.ts") {
+          expect(target.searchParams.get("ref")).toBe("feature/connectors");
+          expect(new Headers(init?.headers).get("accept")).toBe(
+            "application/vnd.github.raw+json",
+          );
+          return Promise.resolve(
+            new Response("export const drawsy = true;\n", { status: 200 }),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/issues") {
+          expect(target.searchParams.get("labels")).toBe("bug,connectors");
+          expect(target.searchParams.get("state")).toBe("all");
+          return Promise.resolve(
+            json([
+              {
+                ...issue,
+                repository_url: "https://api.github.com/repos/adarsh/drawsy",
+                html_url: "https://github.com/adarsh/drawsy/issues/7",
+                assignees: [{ login: "ada" }],
+                comments: 4,
+              },
+              {
+                ...issue,
+                number: 12,
+                title: pullRequest.title,
+                repository_url: "https://api.github.com/repos/adarsh/drawsy",
+                html_url: pullRequest.html_url,
+                pull_request: {},
+              },
+            ]),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/issues/7") {
+          return Promise.resolve(
+            json({
+              ...issue,
+              repository_url: "https://api.github.com/repos/adarsh/drawsy",
+              html_url: "https://github.com/adarsh/drawsy/issues/7",
+            }),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/pulls") {
+          expect(target.searchParams.get("head")).toBe("adarsh:github-tools");
+          expect(target.searchParams.get("base")).toBe("main");
+          return Promise.resolve(json([pullRequest]));
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/pulls/12") {
+          return Promise.resolve(json(pullRequest));
+        }
+        throw new Error(`Unexpected provider request: ${target}`);
+      }),
+    );
+    const executor = new ConnectorAiExecutor(15_000, 256 * 1024);
+    const context = {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capability: "github" as const,
+    };
+
+    const contents = await executor.execute("github", "secret", {
+      ...context,
+      operation: "list",
+      kind: "github_repository_contents",
+      repository: "adarsh/drawsy",
+      path: "src",
+      ref: "feature/connectors",
+    });
+    expect(contents.operation === "list" && contents.items).toHaveLength(2);
+    const file =
+      contents.operation === "list"
+        ? contents.items.find((item) => item.type === "github_file")
+        : undefined;
+    const fileRead = await executor.execute("github", "secret", {
+      ...context,
+      operation: "read",
+      resourceId: file!.id,
+    });
+    expect(fileRead.operation === "read" && fileRead.item.content).toBe(
+      "export const drawsy = true;\n",
+    );
+
+    const issues = await executor.execute("github", "secret", {
+      ...context,
+      operation: "list",
+      kind: "github_issues",
+      repository: "adarsh/drawsy",
+      state: "all",
+      labels: ["bug", "connectors"],
+    });
+    expect(issues.operation === "list" && issues.items).toHaveLength(1);
+    const issueRead = await executor.execute("github", "secret", {
+      ...context,
+      operation: "read",
+      resourceId: issues.operation === "list" ? issues.items[0]!.id : "",
+    });
+    expect(issueRead.operation === "read" && issueRead.item.content).toBe(
+      "Issue details",
+    );
+
+    const pullRequests = await executor.execute("github", "secret", {
+      ...context,
+      operation: "list",
+      kind: "github_pull_requests",
+      repository: "adarsh/drawsy",
+      head: "adarsh:github-tools",
+      base: "main",
+    });
+    const pullRequestRead = await executor.execute("github", "secret", {
+      ...context,
+      operation: "read",
+      resourceId:
+        pullRequests.operation === "list" ? pullRequests.items[0]!.id : "",
+    });
+    expect(
+      pullRequestRead.operation === "read" && pullRequestRead.item.metadata,
+    ).toMatchObject({
+      repository: "adarsh/drawsy",
+      additions: 120,
+      deletions: 10,
+      changedFiles: 5,
+      head: "github-tools",
+      base: "main",
+    });
+    expect(
+      requested.every((target) => target.hostname === "api.github.com"),
+    ).toBe(true);
+  });
+
+  it("rejects binary GitHub files instead of returning corrupt text", async () => {
+    const repository = {
+      id: 1,
+      name: "drawsy",
+      full_name: "adarsh/drawsy",
+      html_url: "https://github.com/adarsh/drawsy",
+      private: true,
+      owner: { login: "adarsh" },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL) => {
+        const target = new URL(String(input));
+        if (target.pathname === "/installation/repositories") {
+          return Promise.resolve(
+            json({ total_count: 1, repositories: [repository] }),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/contents") {
+          return Promise.resolve(
+            json([
+              {
+                name: "logo.png",
+                path: "logo.png",
+                sha: "file-sha",
+                size: 4,
+                type: "file",
+                html_url: "https://github.com/adarsh/drawsy/blob/main/logo.png",
+              },
+            ]),
+          );
+        }
+        if (target.pathname === "/repos/adarsh/drawsy/contents/logo.png") {
+          return Promise.resolve(
+            new Response(new Uint8Array([0x89, 0x50, 0x00, 0x47]), {
+              status: 200,
+            }),
+          );
+        }
+        throw new Error(`Unexpected provider request: ${target}`);
+      }),
+    );
+    const executor = new ConnectorAiExecutor(15_000, 256 * 1024);
+    const context = {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      connectionId: "connection-1",
+      capability: "github" as const,
+    };
+    const contents = await executor.execute("github", "secret", {
+      ...context,
+      operation: "list",
+      kind: "github_repository_contents",
+      repository: "adarsh/drawsy",
+    });
+
+    await expect(
+      executor.execute("github", "secret", {
+        ...context,
+        operation: "read",
+        resourceId: contents.operation === "list" ? contents.items[0]!.id : "",
+      }),
+    ).rejects.toMatchObject({
+      status: 415,
+      code: "connector_resource_unsupported",
+    });
+  });
+
   it("enforces the provider response byte limit", async () => {
     vi.stubGlobal(
       "fetch",

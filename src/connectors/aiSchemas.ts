@@ -58,6 +58,39 @@ const isoTimestamp = z
   .refine((value) => Number.isFinite(Date.parse(value)), {
     message: "must be an ISO 8601 timestamp",
   });
+const githubRepository = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
+const githubPath = z
+  .string()
+  .trim()
+  .max(2_048)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      value.split("/").every((segment) => segment && segment !== "..") &&
+      [...value].every((character) => character.charCodeAt(0) > 31),
+    { message: "must be a repository-relative path" },
+  );
+const githubRef = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const code = character.charCodeAt(0);
+        return code > 31 && code !== 127;
+      }),
+    { message: "must not contain control characters" },
+  );
+const githubPageCursor = z
+  .string()
+  .trim()
+  .regex(/^\d{1,6}$/)
+  .optional();
 
 export const connectorAiExecutionRequestSchema = z.union([
   z
@@ -68,6 +101,53 @@ export const connectorAiExecutionRequestSchema = z.union([
       query: z.string().trim().min(1).max(2_000),
       cursor,
       limit: z.number().int().min(1).max(20).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("github"),
+      kind: z.literal("github_repository_contents"),
+      repository: githubRepository,
+      path: githubPath.optional(),
+      ref: githubRef.optional(),
+      cursor: githubPageCursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("github"),
+      kind: z.literal("github_issues"),
+      repository: githubRepository,
+      state: z.enum(["open", "closed", "all"]).optional(),
+      labels: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+      since: isoTimestamp.optional(),
+      sort: z.enum(["created", "updated", "comments"]).optional(),
+      direction: z.enum(["asc", "desc"]).optional(),
+      cursor: githubPageCursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("github"),
+      kind: z.literal("github_pull_requests"),
+      repository: githubRepository,
+      state: z.enum(["open", "closed", "all"]).optional(),
+      head: z.string().trim().min(1).max(256).optional(),
+      base: z.string().trim().min(1).max(256).optional(),
+      sort: z
+        .enum(["created", "updated", "popularity", "long-running"])
+        .optional(),
+      direction: z.enum(["asc", "desc"]).optional(),
+      cursor: githubPageCursor,
+      limit,
     })
     .strict(),
   z
@@ -218,5 +298,6 @@ export const connectorAiResourceIdSchema = z
     id: z.string().min(1).max(2_048),
     parentId: z.string().min(1).max(2_048).optional(),
     number: z.number().int().positive().optional(),
+    ref: z.string().min(1).max(256).optional(),
   })
   .strict();
