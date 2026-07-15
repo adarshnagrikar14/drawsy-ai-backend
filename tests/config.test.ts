@@ -162,6 +162,47 @@ describe("loadConfig", () => {
     ).toThrow("all Google Workspace connector OAuth values");
   });
 
+  it("configures official remote MCP OAuth clients as public PKCE clients", () => {
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      READ_AI_MCP_OAUTH_CLIENT_ID: "read-client",
+      READ_AI_MCP_OAUTH_REDIRECT_URI:
+        "http://127.0.0.1:3004/v1/connectors/read-ai/oauth/callback",
+      FIREFLIES_MCP_OAUTH_CLIENT_ID: "fireflies-client",
+      FIREFLIES_MCP_OAUTH_REDIRECT_URI:
+        "http://127.0.0.1:3004/v1/connectors/fireflies/oauth/callback",
+    });
+
+    expect(config.connectors?.readAi).toEqual({
+      clientId: "read-client",
+      redirectUri: "http://127.0.0.1:3004/v1/connectors/read-ai/oauth/callback",
+    });
+    expect(config.connectors?.fireflies).toEqual({
+      clientId: "fireflies-client",
+      redirectUri:
+        "http://127.0.0.1:3004/v1/connectors/fireflies/oauth/callback",
+    });
+  });
+
+  it("rejects partial remote MCP connector OAuth configuration", () => {
+    expect(() =>
+      loadConfig({
+        FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+        R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+        R2_BUCKET_NAME: "drawsy",
+        R2_ACCESS_KEY_ID: "key",
+        R2_SECRET_ACCESS_KEY: "secret",
+        WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        READ_AI_MCP_OAUTH_CLIENT_ID: "read-client",
+      }),
+    ).toThrow("all Read AI connector OAuth values");
+  });
+
   it("configures a GitHub App installation connector", () => {
     const config = loadConfig({
       FIREBASE_PROJECT_ID: "drawsy-ai-dev",

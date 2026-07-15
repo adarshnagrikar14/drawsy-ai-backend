@@ -3,11 +3,20 @@ export const connectorProviderIds = [
   "notion",
   "slack",
   "github",
+  "read-ai",
+  "fireflies",
 ] as const;
 
 export type ConnectorProviderId = (typeof connectorProviderIds)[number];
 export type ConnectorCapability =
-  "mail" | "calendar" | "drive" | "notion" | "slack" | "github";
+  | "mail"
+  | "calendar"
+  | "drive"
+  | "notion"
+  | "slack"
+  | "github"
+  | "read-ai"
+  | "fireflies";
 
 export type ConnectorProviderDefinition = {
   id: ConnectorProviderId;
@@ -213,6 +222,16 @@ export type ConnectorAiExecutionRequest = {
       capability: ConnectorCapability;
       resourceId: string;
     }
+  | {
+      operation: "mcp_tools";
+      capability: "read-ai" | "fireflies";
+    }
+  | {
+      operation: "mcp_call";
+      capability: "read-ai" | "fireflies";
+      toolName: string;
+      arguments: Record<string, unknown>;
+    }
 );
 
 export type ConnectorAiItem = {
@@ -257,6 +276,22 @@ export type ConnectorAiExecutionResult =
       operation: "read";
       capability: ConnectorCapability;
       item: ConnectorAiItem;
+    }
+  | {
+      operation: "mcp_tools";
+      capability: "read-ai" | "fireflies";
+      tools: Array<{
+        name: string;
+        description: string | null;
+        inputSchema: Record<string, unknown>;
+      }>;
+    }
+  | {
+      operation: "mcp_call";
+      capability: "read-ai" | "fireflies";
+      toolName: string;
+      content: unknown;
+      structuredContent: Record<string, unknown> | null;
     };
 
 export interface ConnectorConnectionStore {

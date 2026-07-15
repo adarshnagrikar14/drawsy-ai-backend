@@ -29,4 +29,18 @@ export const connectorProviderCatalog = [
     executionMode: "provider_api",
     availability: "stable",
   },
+  {
+    id: "read-ai",
+    name: "Read AI",
+    capabilities: ["read-ai"],
+    executionMode: "remote_mcp",
+    availability: "preview",
+  },
+  {
+    id: "fireflies",
+    name: "Fireflies",
+    capabilities: ["fireflies"],
+    executionMode: "remote_mcp",
+    availability: "stable",
+  },
 ] as const satisfies readonly ConnectorProviderDefinition[];

@@ -156,6 +156,10 @@ const environmentSchema = z.object({
   SLACK_OAUTH_CLIENT_ID: optionalText,
   SLACK_OAUTH_CLIENT_SECRET: optionalText,
   SLACK_OAUTH_REDIRECT_URI: optionalUrl,
+  READ_AI_MCP_OAUTH_CLIENT_ID: optionalText,
+  READ_AI_MCP_OAUTH_REDIRECT_URI: optionalUrl,
+  FIREFLIES_MCP_OAUTH_CLIENT_ID: optionalText,
+  FIREFLIES_MCP_OAUTH_REDIRECT_URI: optionalUrl,
   GITHUB_APP_ID: z.coerce.number().int().positive().optional(),
   GITHUB_APP_SLUG: optionalText,
   GITHUB_APP_PRIVATE_KEY_BASE64: optionalText,
@@ -257,6 +261,8 @@ export type AppConfig = {
     notion?: { clientId: string; clientSecret: string; redirectUri: string };
     slack?: { clientId: string; clientSecret: string; redirectUri: string };
     github?: { appId: number; appSlug: string; privateKey: string };
+    readAi?: { clientId: string; redirectUri: string };
+    fireflies?: { clientId: string; redirectUri: string };
     successUrl: string;
     encryptionKeys: ReadonlyMap<number, Buffer>;
     encryptionKeyVersion: number;
@@ -352,6 +358,14 @@ export const loadConfig = (
     parsed.data.SLACK_OAUTH_CLIENT_SECRET,
     parsed.data.SLACK_OAUTH_REDIRECT_URI,
   ];
+  const readAiOAuthValues = [
+    parsed.data.READ_AI_MCP_OAUTH_CLIENT_ID,
+    parsed.data.READ_AI_MCP_OAUTH_REDIRECT_URI,
+  ];
+  const firefliesOAuthValues = [
+    parsed.data.FIREFLIES_MCP_OAUTH_CLIENT_ID,
+    parsed.data.FIREFLIES_MCP_OAUTH_REDIRECT_URI,
+  ];
   const validateProviderOAuth = (name: string, values: unknown[]) => {
     if (values.some(Boolean) && !values.every(Boolean)) {
       throw new Error(
@@ -366,6 +380,11 @@ export const loadConfig = (
   );
   const hasNotionOAuth = validateProviderOAuth("Notion", notionOAuthValues);
   const hasSlackOAuth = validateProviderOAuth("Slack", slackOAuthValues);
+  const hasReadAiOAuth = validateProviderOAuth("Read AI", readAiOAuthValues);
+  const hasFirefliesOAuth = validateProviderOAuth(
+    "Fireflies",
+    firefliesOAuthValues,
+  );
   const githubPrivateKeySources = [
     parsed.data.GITHUB_APP_PRIVATE_KEY_BASE64,
     parsed.data.GITHUB_APP_PRIVATE_KEY_PATH,
@@ -403,7 +422,12 @@ export const loadConfig = (
     }
   }
   const hasAnyConnectorProvider =
-    hasGoogleWorkspaceOAuth || hasNotionOAuth || hasSlackOAuth || hasGithubApp;
+    hasGoogleWorkspaceOAuth ||
+    hasNotionOAuth ||
+    hasSlackOAuth ||
+    hasGithubApp ||
+    hasReadAiOAuth ||
+    hasFirefliesOAuth;
   if (
     hasAnyConnectorProvider &&
     parsed.data.NODE_ENV === "production" &&
@@ -419,6 +443,8 @@ export const loadConfig = (
       parsed.data.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI,
       parsed.data.NOTION_OAUTH_REDIRECT_URI,
       parsed.data.SLACK_OAUTH_REDIRECT_URI,
+      parsed.data.READ_AI_MCP_OAUTH_REDIRECT_URI,
+      parsed.data.FIREFLIES_MCP_OAUTH_REDIRECT_URI,
     ].filter((value): value is string => Boolean(value));
     if (oauthUrls.some((value) => new URL(value).protocol !== "https:")) {
       throw new Error(
@@ -528,6 +554,18 @@ export const loadConfig = (
             appId: parsed.data.GITHUB_APP_ID!,
             appSlug: parsed.data.GITHUB_APP_SLUG!,
             privateKey: githubPrivateKey!,
+          }
+        : undefined,
+      readAi: hasReadAiOAuth
+        ? {
+            clientId: parsed.data.READ_AI_MCP_OAUTH_CLIENT_ID!,
+            redirectUri: parsed.data.READ_AI_MCP_OAUTH_REDIRECT_URI!,
+          }
+        : undefined,
+      fireflies: hasFirefliesOAuth
+        ? {
+            clientId: parsed.data.FIREFLIES_MCP_OAUTH_CLIENT_ID!,
+            redirectUri: parsed.data.FIREFLIES_MCP_OAUTH_REDIRECT_URI!,
           }
         : undefined,
       successUrl:

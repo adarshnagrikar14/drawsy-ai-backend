@@ -126,6 +126,8 @@ describe("DefaultConnectorService", () => {
       { id: "notion", configured: false },
       { id: "slack", configured: false },
       { id: "github", configured: false },
+      { id: "read-ai", configured: false },
+      { id: "fireflies", configured: false },
     ]);
     expect(listConnections).toHaveBeenCalledWith("user-1");
   });
