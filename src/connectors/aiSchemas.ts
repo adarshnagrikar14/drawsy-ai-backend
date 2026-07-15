@@ -24,6 +24,17 @@ const capability = z.enum([
   "notion",
   "slack",
   "github",
+  "read-ai",
+  "fireflies",
+]);
+const remoteMcpCapability = z.enum(["read-ai", "fireflies"]);
+const providerApiCapability = z.enum([
+  "mail",
+  "calendar",
+  "drive",
+  "notion",
+  "slack",
+  "github",
 ]);
 
 export const connectorAiGrantRequestSchema = z
@@ -91,13 +102,25 @@ const githubPageCursor = z
   .trim()
   .regex(/^\d{1,6}$/)
   .optional();
+const remoteMcpToolName = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+const remoteMcpArguments = z
+  .record(z.string().trim().min(1).max(128), z.unknown())
+  .refine(
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 64 * 1024,
+    {
+      message: "MCP tool arguments exceed the 64 KiB limit",
+    },
+  );
 
 export const connectorAiExecutionRequestSchema = z.union([
   z
     .object({
       ...executionContextSchema,
       operation: z.literal("search"),
-      capability,
+      capability: providerApiCapability,
       query: z.string().trim().min(1).max(2_000),
       cursor,
       limit: z.number().int().min(1).max(20).optional(),
@@ -269,8 +292,24 @@ export const connectorAiExecutionRequestSchema = z.union([
     .object({
       ...executionContextSchema,
       operation: z.literal("read"),
-      capability,
+      capability: providerApiCapability,
       resourceId: z.string().trim().min(1).max(4_096),
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("mcp_tools"),
+      capability: remoteMcpCapability,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("mcp_call"),
+      capability: remoteMcpCapability,
+      toolName: remoteMcpToolName,
+      arguments: remoteMcpArguments,
     })
     .strict(),
 ]);

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ApiError } from "../http/apiError.js";
 import { connectorAiResourceIdSchema } from "./aiSchemas.js";
+import { RemoteMcpClient } from "./remoteMcpClient.js";
 
 import type {
   ConnectorAiExecutionRequest,
@@ -366,10 +367,14 @@ const githubPullRequestSchema = z
   .passthrough();
 
 export class ConnectorAiExecutor {
+  private readonly remoteMcpClient: RemoteMcpClient;
+
   constructor(
     private readonly timeoutMs: number,
     private readonly maxOutputBytes: number,
-  ) {}
+  ) {
+    this.remoteMcpClient = new RemoteMcpClient(timeoutMs, maxOutputBytes);
+  }
 
   async execute(
     providerId: ConnectorProviderId,
@@ -377,6 +382,41 @@ export class ConnectorAiExecutor {
     request: ConnectorAiExecutionRequest,
   ): Promise<ConnectorAiExecutionResult> {
     this.assertProviderCapability(providerId, request.capability);
+    if (request.operation === "mcp_tools") {
+      const tools = await this.remoteMcpClient.listReadOnlyTools(
+        request.capability,
+        accessToken,
+      );
+      return this.fitOutput({
+        operation: "mcp_tools",
+        capability: request.capability,
+        tools: tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description || null,
+          inputSchema: tool.inputSchema,
+        })),
+      });
+    }
+    if (request.operation === "mcp_call") {
+      const result = await this.remoteMcpClient.callReadOnlyTool(
+        request.capability,
+        accessToken,
+        request.toolName,
+        request.arguments,
+      );
+      return this.fitOutput({
+        operation: "mcp_call",
+        capability: request.capability,
+        toolName: request.toolName,
+        content: result.content,
+        structuredContent:
+          result.structuredContent &&
+          typeof result.structuredContent === "object" &&
+          !Array.isArray(result.structuredContent)
+            ? (result.structuredContent as Record<string, unknown>)
+            : null,
+      });
+    }
     const result =
       request.operation === "search"
         ? await this.search(providerId, accessToken, request)
@@ -437,6 +477,13 @@ export class ConnectorAiExecutor {
         return this.searchSlack(accessToken, request);
       case "github":
         return this.searchGitHub(accessToken, request);
+      case "read-ai":
+      case "fireflies":
+        throw new ApiError(
+          400,
+          "connector_operation_unsupported",
+          "Use the remote MCP tools for this connector.",
+        );
       default:
         return this.unreachable(request.capability);
     }
@@ -465,6 +512,13 @@ export class ConnectorAiExecutor {
         return this.readSlack(accessToken, resource);
       case "github":
         return this.readGitHub(accessToken, resource);
+      case "read-ai":
+      case "fireflies":
+        throw new ApiError(
+          400,
+          "connector_operation_unsupported",
+          "Use the remote MCP tools for this connector.",
+        );
       default:
         return this.unreachable(request.capability);
     }
@@ -2166,6 +2220,14 @@ export class ConnectorAiExecutor {
   private fitOutput(
     result: ConnectorAiExecutionResult,
   ): ConnectorAiExecutionResult {
+    if (result.operation === "mcp_tools" || result.operation === "mcp_call") {
+      if (
+        Buffer.byteLength(JSON.stringify(result), "utf8") > this.maxOutputBytes
+      ) {
+        throw this.outputTooLarge();
+      }
+      return result;
+    }
     if (result.operation === "search" || result.operation === "list") {
       while (
         result.items.length > 0 &&

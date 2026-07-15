@@ -18,6 +18,10 @@ import { GoogleWorkspaceProvider } from "./connectors/googleWorkspaceProvider.js
 import { NotionProvider } from "./connectors/notionProvider.js";
 import { SlackProvider } from "./connectors/slackProvider.js";
 import { GitHubProvider } from "./connectors/githubProvider.js";
+import {
+  FirefliesProvider,
+  ReadAiProvider,
+} from "./connectors/remoteMcpProvider.js";
 import { DefaultAiResourceService } from "./aiResources/service.js";
 
 const config = loadConfig();
@@ -53,6 +57,22 @@ const connectorProviders = config.connectors
         ? [
             new GitHubProvider(
               config.connectors.github,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+      ...(config.connectors.readAi
+        ? [
+            new ReadAiProvider(
+              config.connectors.readAi,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+      ...(config.connectors.fireflies
+        ? [
+            new FirefliesProvider(
+              config.connectors.fireflies,
               config.connectors.httpTimeoutMs,
             ),
           ]

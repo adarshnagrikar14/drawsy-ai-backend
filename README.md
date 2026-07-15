@@ -44,13 +44,16 @@ the Excalidraw editor core.
 - `GET /v1/connectors/:providerId/oauth/callback` - public OAuth callback
 - `DELETE /v1/connectors/connections/:connectionId` - revokes and removes access
 - `POST /v1/connectors/ai/grants` - mints a short-lived, user-authenticated connector grant for one local AI turn
-- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only keyword `search`, provider-aware `list`, or item `read` against a connected provider; GitHub supports selected repositories, directory contents, exact text files, issues, and pull requests
+- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only provider operations; Read AI and Fireflies proxy their official remote MCP tools
 
 The connector control plane owns OAuth, encrypted credentials, account-scoped
-permissions, refresh, and revocation for Google Workspace, Notion, Slack, and
-GitHub. One Google Workspace account supplies Mail, Calendar, and Drive with
+permissions, refresh, and revocation for Google Workspace, Notion, Slack,
+GitHub, Read AI, and Fireflies. One Google Workspace account supplies Mail, Calendar, and Drive with
 granted read-only scopes. Provider adapters keep product APIs and future MCP
-consumers behind the same authorization boundary. Drawsy's local MCP service
+consumers behind the same authorization boundary. Read AI and Fireflies use
+their first-party Streamable HTTP MCP servers with OAuth and live tool
+discovery; Drawsy filters their tool catalogs to read-only operations before
+they reach the model. Drawsy's local MCP service
 uses short-lived signed grants and never receives provider access or refresh
 tokens.
 
@@ -86,6 +89,12 @@ Provider applications must be registered before their cards become available:
   requests permissions. Set its Setup URL to
   `/v1/connectors/github/install/callback`; users choose repository access in
   GitHub's installation screen.
+- Read AI: dynamically registered public OAuth client for
+  `https://api.read.ai/mcp`, using the backend
+  `/v1/connectors/read-ai/oauth/callback` URI and PKCE.
+- Fireflies: dynamically registered public OAuth client for
+  `https://api.fireflies.ai/mcp`, using the backend
+  `/v1/connectors/fireflies/oauth/callback` URI and PKCE.
 
 Use HTTPS callback/success URLs and a deployment secret manager in production.
 
@@ -187,6 +196,8 @@ npm start
 - `GITHUB_APP_ID`, `GITHUB_APP_SLUG`: public GitHub App identity
 - `GITHUB_APP_PRIVATE_KEY_BASE64`: server-only base64-encoded GitHub App private key
 - `GITHUB_APP_PRIVATE_KEY_PATH`: local or mounted secret-file alternative to the base64 value
+- `READ_AI_MCP_OAUTH_CLIENT_ID`, `READ_AI_MCP_OAUTH_REDIRECT_URI`: Read AI remote MCP public OAuth client
+- `FIREFLIES_MCP_OAUTH_CLIENT_ID`, `FIREFLIES_MCP_OAUTH_REDIRECT_URI`: Fireflies remote MCP public OAuth client
 - `CONNECTORS_OAUTH_SUCCESS_URL`: trusted frontend URL after OAuth completes
 - `CONNECTOR_ENCRYPTION_KEY`: optional dedicated base64-encoded 32-byte token key
 - `CONNECTOR_ENCRYPTION_KEY_VERSION`: positive current connector key version
