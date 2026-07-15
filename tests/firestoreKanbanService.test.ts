@@ -361,6 +361,154 @@ describe("FirestoreKanbanService", () => {
     expect(result.map((entry) => entry.status)).toEqual(["applied", "applied"]);
   });
 
+  it("reads a newly created card when the same batch adds its checklist", async () => {
+    const firestore = new FakeFirestore();
+    getFirestore.mockReturnValue(firestore);
+    const service = new FirestoreKanbanService(
+      {} as never,
+      new KanbanCrypto(Buffer.alloc(32, 8)),
+      { eventMs: 1000, operationMs: 1000, invitesPerHour: 10 },
+    );
+    await service.createBoard("user-0001", {
+      id: "board-0001",
+      title: "Roadmap",
+      initialColumnId: "column-0001",
+      initialColumnTitle: "Not started",
+    });
+
+    const result = await service.applyCommands(
+      "user-0001",
+      "board-0001",
+      "client-0001",
+      [
+        {
+          ...commandBase,
+          operationId: "operation-create-card",
+          type: "createCard",
+          entityId: "card-0001",
+          payload: {
+            title: "Task",
+            description: "",
+            priority: null,
+            progress: 0,
+            dueDate: null,
+            legacyAssigneeText: null,
+            legacyCanvasTags: [],
+            columnId: "column-0001",
+            assigneeIds: [],
+            beforeId: null,
+            afterId: null,
+          },
+        },
+        {
+          ...commandBase,
+          operationId: "operation-create-checklist",
+          clientSequence: 2,
+          type: "createChecklistItem",
+          entityId: "checklist-0001",
+          payload: {
+            cardId: "card-0001",
+            title: "Review",
+            beforeId: null,
+            afterId: null,
+          },
+        },
+      ],
+    );
+
+    expect(result.map((entry) => entry.status)).toEqual(["applied", "applied"]);
+    await expect(
+      service.getSnapshot("user-0001", "board-0001"),
+    ).resolves.toMatchObject({
+      checklistItems: [{ id: "checklist-0001", cardId: "card-0001" }],
+    });
+  });
+
+  it("uses ranks written earlier in the same multi-move batch", async () => {
+    const firestore = new FakeFirestore();
+    getFirestore.mockReturnValue(firestore);
+    const service = new FirestoreKanbanService(
+      {} as never,
+      new KanbanCrypto(Buffer.alloc(32, 9)),
+      { eventMs: 1000, operationMs: 1000, invitesPerHour: 10 },
+    );
+    await service.createBoard("user-0001", {
+      id: "board-0001",
+      title: "Roadmap",
+      initialColumnId: "column-0001",
+      initialColumnTitle: "Not started",
+    });
+
+    const ids = ["card-x", "card-a", "card-b", "card-c"];
+    for (const [index, id] of ids.entries()) {
+      await service.applyCommands("user-0001", "board-0001", "client-0001", [
+        {
+          ...commandBase,
+          operationId: `operation-create-${id}`,
+          clientSequence: index + 1,
+          type: "createCard",
+          entityId: id,
+          payload: {
+            title: id,
+            description: "",
+            priority: null,
+            progress: 0,
+            dueDate: null,
+            legacyAssigneeText: null,
+            legacyCanvasTags: [],
+            columnId: "column-0001",
+            assigneeIds: [],
+            beforeId: index > 0 ? ids[index - 1]! : null,
+            afterId: null,
+          },
+        },
+      ]);
+    }
+
+    const result = await service.applyCommands(
+      "user-0001",
+      "board-0001",
+      "client-0001",
+      [
+        {
+          ...commandBase,
+          operationId: "operation-move-a",
+          clientSequence: 5,
+          type: "moveCard",
+          entityId: "card-a",
+          baseVersion: 1,
+          payload: {
+            columnId: "column-0001",
+            beforeId: null,
+            afterId: "card-x",
+          },
+        },
+        {
+          ...commandBase,
+          operationId: "operation-move-c",
+          clientSequence: 6,
+          type: "moveCard",
+          entityId: "card-c",
+          baseVersion: 1,
+          payload: {
+            columnId: "column-0001",
+            beforeId: "card-a",
+            afterId: "card-x",
+          },
+        },
+      ],
+    );
+
+    expect(result.map((entry) => entry.status)).toEqual(["applied", "applied"]);
+    const snapshot = await service.getSnapshot("user-0001", "board-0001");
+    expect(snapshot.cards.map((card) => card.id)).toEqual([
+      "card-a",
+      "card-c",
+      "card-x",
+      "card-b",
+    ]);
+  });
+
   it("enforces board lock inside the command transaction", async () => {
     const firestore = new FakeFirestore();
     getFirestore.mockReturnValue(firestore);

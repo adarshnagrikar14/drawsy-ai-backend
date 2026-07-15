@@ -11,10 +11,8 @@ import type {
   DocumentData,
   DocumentSnapshot,
   DocumentReference,
-  Query,
   QuerySnapshot,
   Firestore,
-  Transaction,
 } from "firebase-admin/firestore";
 import type { KanbanCrypto } from "./crypto.js";
 import type {
@@ -82,6 +80,17 @@ type DeleteColumnCommand = {
   payload: { destinationColumnId: string | null };
 };
 type QueryCache = Map<string, QuerySnapshot<DocumentData>>;
+type CommandDocumentSnapshot = Pick<
+  DocumentSnapshot<DocumentData>,
+  "data" | "exists" | "id" | "ref"
+>;
+type CommandTransaction = {
+  get(reference: DocumentReference): Promise<CommandDocumentSnapshot>;
+  set(reference: DocumentReference, data: DocumentData): void;
+  update(reference: DocumentReference, data: DocumentData): void;
+  create(reference: DocumentReference, data: DocumentData): void;
+  delete(reference: DocumentReference): void;
+};
 type RealtimeSubscriber = {
   listener: (event: KanbanRealtimeEvent) => void;
   onError: (error: Error) => void;
@@ -103,7 +112,7 @@ class CommandFailure extends Error {
 }
 
 const requireData = <T>(
-  snapshot: DocumentSnapshot<DocumentData>,
+  snapshot: CommandDocumentSnapshot,
   code: string,
   message: string,
 ): T => {
@@ -727,7 +736,7 @@ export class FirestoreKanbanService implements KanbanService {
       const docRefs = Array.from(pathsToPreFetch.values());
       const snapshots =
         docRefs.length > 0 ? await transaction.getAll(...docRefs) : [];
-      const snapshotsMap = new Map<string, DocumentSnapshot>();
+      const snapshotsMap = new Map<string, CommandDocumentSnapshot>();
       for (const snap of snapshots) {
         snapshotsMap.set(snap.ref.path, snap);
       }
@@ -787,31 +796,55 @@ export class FirestoreKanbanService implements KanbanService {
         }
       }
 
-      const proxiedGet: Transaction["get"] = ((
-        ref: DocumentReference | Query,
-      ) => {
-        if ("path" in ref) {
-          const snap = snapshotsMap.get(ref.path);
-          if (snap) {
-            return Promise.resolve(snap);
+      const snapshotFromData = (
+        reference: DocumentReference,
+        data: DocumentData | undefined,
+      ): CommandDocumentSnapshot => ({
+        ref: reference,
+        id: reference.id,
+        exists: data !== undefined,
+        data: () => data,
+      });
+      const commandTransaction: CommandTransaction = {
+        get: (reference) => {
+          const snapshot = snapshotsMap.get(reference.path);
+          if (!snapshot) {
+            throw new Error(
+              `Kanban command document was not prefetched: ${reference.path}`,
+            );
           }
-          return transaction.get(ref);
-        }
-        return transaction.get(ref);
-      }) as Transaction["get"];
-
-      const proxyTransaction = new Proxy(transaction, {
-        get(target, prop, receiver) {
-          if (prop === "get") {
-            return proxiedGet;
-          }
-          const value: unknown = Reflect.get(target, prop, receiver);
-          if (typeof value === "function") {
-            return (value as (...args: unknown[]) => unknown).bind(target);
-          }
-          return value;
+          return Promise.resolve(snapshot);
         },
-      }) as unknown as Transaction;
+        set: (reference, data) => {
+          transaction.set(reference, data);
+          snapshotsMap.set(reference.path, snapshotFromData(reference, data));
+        },
+        update: (reference, data) => {
+          const snapshot = snapshotsMap.get(reference.path);
+          if (!snapshot?.exists) {
+            throw new Error(
+              `Kanban command update target was not prefetched: ${reference.path}`,
+            );
+          }
+          const current = snapshot.data();
+          transaction.update(reference, data);
+          snapshotsMap.set(
+            reference.path,
+            snapshotFromData(reference, { ...current, ...data }),
+          );
+        },
+        create: (reference, data) => {
+          transaction.create(reference, data);
+          snapshotsMap.set(reference.path, snapshotFromData(reference, data));
+        },
+        delete: (reference) => {
+          transaction.delete(reference);
+          snapshotsMap.set(
+            reference.path,
+            snapshotFromData(reference, undefined),
+          );
+        },
+      };
 
       const results: KanbanCommandResult[] = [];
       let currentRevision = board.revision;
@@ -862,7 +895,7 @@ export class FirestoreKanbanService implements KanbanService {
 
           const nextRevision = currentRevision + 1;
           const change = await this.executeCommand(
-            proxyTransaction,
+            commandTransaction,
             key,
             boardId,
             userId,
@@ -941,7 +974,7 @@ export class FirestoreKanbanService implements KanbanService {
   }
 
   private async executeCommand(
-    transaction: Transaction,
+    transaction: CommandTransaction,
     key: Buffer,
     boardId: string,
     userId: string,
@@ -1522,7 +1555,7 @@ export class FirestoreKanbanService implements KanbanService {
   }
 
   private async deleteColumn(
-    transaction: Transaction,
+    transaction: CommandTransaction,
     key: Buffer,
     boardId: string,
     userId: string,
@@ -1548,13 +1581,10 @@ export class FirestoreKanbanService implements KanbanService {
     const columnsKey = `columns:${boardId}`;
     const cardsKey = `cards:${boardId}:${command.entityId}`;
 
-    const activeColumns =
-      queryCache.get(columnsKey) ??
-      (await transaction.get(
-        this.boardRef(boardId)
-          .collection("columns")
-          .where("deletedAt", "==", null),
-      ));
+    const activeColumns = queryCache.get(columnsKey);
+    if (!activeColumns) {
+      throw new Error("Active Kanban columns were not prefetched");
+    }
     if (activeColumns.size <= 1) {
       throw new CommandFailure(
         "rejected",
@@ -1562,14 +1592,10 @@ export class FirestoreKanbanService implements KanbanService {
         "A board must keep at least one column.",
       );
     }
-    const cards =
-      queryCache.get(cardsKey) ??
-      (await transaction.get(
-        this.boardRef(boardId)
-          .collection("cards")
-          .where("columnId", "==", command.entityId)
-          .where("deletedAt", "==", null),
-      ));
+    const cards = queryCache.get(cardsKey);
+    if (!cards) {
+      throw new Error("Kanban column cards were not prefetched");
+    }
     if (!cards.empty && !command.payload.destinationColumnId) {
       throw new CommandFailure(
         "rejected",
@@ -1617,7 +1643,7 @@ export class FirestoreKanbanService implements KanbanService {
   }
 
   private async rankFor(
-    transaction: Transaction,
+    transaction: CommandTransaction,
     boardId: string,
     collection: "columns" | "cards" | "checklistItems",
     parentId: string | null,
@@ -1651,11 +1677,24 @@ export class FirestoreKanbanService implements KanbanService {
       }
       return String(snapshot.data()?.rank);
     };
-    return createRankBetween(await getRank(beforeId), await getRank(afterId));
+    const beforeRank = await getRank(beforeId);
+    const afterRank = await getRank(afterId);
+    if (
+      beforeRank !== null &&
+      afterRank !== null &&
+      compareRanks(beforeRank, afterRank) >= 0
+    ) {
+      throw new CommandFailure(
+        "conflict",
+        "invalid_neighbor",
+        "The order changed.",
+      );
+    }
+    return createRankBetween(beforeRank, afterRank);
   }
 
   private async assertColumn(
-    transaction: Transaction,
+    transaction: CommandTransaction,
     boardId: string,
     columnId: string,
   ) {
@@ -1672,7 +1711,7 @@ export class FirestoreKanbanService implements KanbanService {
   }
 
   private async assertCard(
-    transaction: Transaction,
+    transaction: CommandTransaction,
     key: Buffer,
     boardId: string,
     cardId: string,
@@ -1692,7 +1731,7 @@ export class FirestoreKanbanService implements KanbanService {
   }
 
   private async assertAssignees(
-    transaction: Transaction,
+    transaction: CommandTransaction,
     boardId: string,
     assigneeIds: string[],
   ) {
@@ -2315,7 +2354,7 @@ export class FirestoreKanbanService implements KanbanService {
   private toColumn(
     key: Buffer,
     boardId: string,
-    snapshot: DocumentSnapshot<DocumentData>,
+    snapshot: CommandDocumentSnapshot,
   ): KanbanColumn {
     const data = requireData<DocumentData>(
       snapshot,
@@ -2376,7 +2415,7 @@ export class FirestoreKanbanService implements KanbanService {
   private toCard(
     key: Buffer,
     boardId: string,
-    snapshot: DocumentSnapshot<DocumentData>,
+    snapshot: CommandDocumentSnapshot,
   ): KanbanCard {
     const data = requireData<DocumentData>(
       snapshot,
@@ -2436,7 +2475,7 @@ export class FirestoreKanbanService implements KanbanService {
   private toChecklistItem(
     key: Buffer,
     boardId: string,
-    snapshot: DocumentSnapshot<DocumentData>,
+    snapshot: CommandDocumentSnapshot,
   ): KanbanChecklistItem {
     const data = requireData<DocumentData>(
       snapshot,
