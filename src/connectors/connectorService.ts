@@ -114,7 +114,7 @@ export class DefaultConnectorService implements ConnectorService {
       Date.now() + this.config.stateTtlMs,
     );
     return {
-      setupUrl: provider.getSetupUrl(state, accountId),
+      setupUrl: await provider.getSetupUrl(state, accountId),
       attemptId,
       setupToken: state,
     };

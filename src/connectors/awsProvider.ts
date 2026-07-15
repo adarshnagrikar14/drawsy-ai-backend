@@ -4,6 +4,8 @@ import {
   STSClient,
 } from "@aws-sdk/client-sts";
 import { DescribeRegionsCommand, EC2Client } from "@aws-sdk/client-ec2";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
 
 import { ApiError } from "../http/apiError.js";
@@ -38,6 +40,7 @@ type AwsProviderDependencies = {
   ) => Promise<AwsCredentialIdentity | null>;
   listRegions?: (credentials: AwsCredentialIdentity) => Promise<string[]>;
   identify?: (credentials: AwsCredentialIdentity) => Promise<string | null>;
+  getTemplateUrl?: () => Promise<string>;
 };
 
 const temporaryCredentials = (
@@ -83,6 +86,9 @@ export class AwsProvider implements ConnectorProvider {
     AwsProviderDependencies["listRegions"]
   >;
   private readonly identify: NonNullable<AwsProviderDependencies["identify"]>;
+  private readonly getTemplateUrl: NonNullable<
+    AwsProviderDependencies["getTemplateUrl"]
+  >;
 
   constructor(
     private readonly config: NonNullable<
@@ -138,6 +144,28 @@ export class AwsProvider implements ConnectorProvider {
         });
         return identity.Account || null;
       });
+    this.getTemplateUrl =
+      dependencies.getTemplateUrl ||
+      (async () => {
+        if (this.config.templateUrl) return this.config.templateUrl;
+        try {
+          const template = this.config.templateS3!;
+          return await getSignedUrl(
+            new S3Client({ region: template.region }),
+            new GetObjectCommand({
+              Bucket: template.bucket,
+              Key: template.key,
+            }),
+            { expiresIn: 3_600 },
+          );
+        } catch {
+          throw new ApiError(
+            503,
+            "connector_aws_template_unavailable",
+            "Drawsy could not prepare the AWS setup template.",
+          );
+        }
+      });
   }
 
   getAuthorizationUrl(): string {
@@ -148,14 +176,15 @@ export class AwsProvider implements ConnectorProvider {
     );
   }
 
-  getSetupUrl(state: string, accountId: string) {
+  async getSetupUrl(state: string, accountId: string) {
     const account = accountIdSchema.parse(accountId);
+    const templateUrl = await this.getTemplateUrl();
     const target = new URL(
       `https://console.aws.amazon.com/cloudformation/home`,
     );
     target.searchParams.set("region", this.config.setupRegion);
     target.hash = `/stacks/quickcreate?${new URLSearchParams({
-      templateURL: this.config.templateUrl,
+      templateURL: templateUrl,
       stackName: "Drawsy-Infrastructure-Read-Access",
       param_DrawsyPrincipalArn: this.config.principalArn,
       param_DrawsyExternalId: state,

@@ -97,8 +97,9 @@ Provider applications must be registered before their cards become available:
 - Fireflies: dynamically registered public OAuth client for
   `https://api.fireflies.ai/mcp`, using the backend
   `/v1/connectors/fireflies/oauth/callback` URI and PKCE.
-- AWS: deploy `infra/aws-connector-read-role.yaml` at the configured public
-  HTTPS template URL. The backend runtime uses its normal AWS credential chain
+- AWS: upload `infra/aws-connector-read-role.yaml` to private Amazon S3 (or
+  configure a supported S3 URL). Drawsy creates an object-specific signed URL
+  for CloudFormation. The backend runtime uses its normal AWS credential chain
   as `AWS_CONNECTOR_PRINCIPAL_ARN`, assumes the customer role with a unique
   external ID, and stores only the encrypted role descriptor. The connection
   exposes enabled regions, Resource Explorer inventory, and CloudFormation
@@ -207,7 +208,10 @@ npm start
 - `READ_AI_MCP_OAUTH_CLIENT_ID`, `READ_AI_MCP_OAUTH_REDIRECT_URI`: Read AI remote MCP public OAuth client
 - `FIREFLIES_MCP_OAUTH_CLIENT_ID`, `FIREFLIES_MCP_OAUTH_REDIRECT_URI`: Fireflies remote MCP public OAuth client
 - `AWS_CONNECTOR_PRINCIPAL_ARN`: stable IAM role ARN used by the Drawsy backend runtime
-- `AWS_CONNECTOR_TEMPLATE_URL`: public HTTPS URL serving `infra/aws-connector-read-role.yaml`
+- `AWS_CONNECTOR_TEMPLATE_URL`: optional supported Amazon S3 template URL
+- `AWS_CONNECTOR_TEMPLATE_S3_BUCKET`: optional private template bucket; configure exactly one template source
+- `AWS_CONNECTOR_TEMPLATE_S3_KEY`: template object key; default `connectors/aws/aws-connector-read-role.yaml`
+- `AWS_CONNECTOR_TEMPLATE_S3_REGION`: template bucket region; default `us-east-1`
 - `AWS_CONNECTOR_ROLE_NAME`: deterministic customer-account role name; default `DrawsyInfrastructureReadRole`
 - `AWS_CONNECTOR_SETUP_REGION`: region where the guided CloudFormation stack is created; default `us-east-1`
 - `CONNECTORS_OAUTH_SUCCESS_URL`: trusted frontend URL after OAuth completes

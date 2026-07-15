@@ -7,7 +7,8 @@ import {
 
 const config = {
   principalArn: "arn:aws:iam::123456789012:role/DrawsyBackendRole",
-  templateUrl: "https://assets.drawsy.example/aws/read-role.yaml",
+  templateUrl:
+    "https://drawsy-templates.s3.ap-south-1.amazonaws.com/aws/read-role.yaml",
   roleName: "DrawsyInfrastructureReadRole",
   setupRegion: "ap-south-1",
 };
@@ -19,10 +20,10 @@ const credentials = {
 };
 
 describe("AwsProvider", () => {
-  it("builds a reviewable CloudFormation quick-create URL", () => {
+  it("builds a reviewable CloudFormation quick-create URL", async () => {
     const provider = new AwsProvider(config, 15_000);
     const target = new URL(
-      provider.getSetupUrl("external-state", "999999999999"),
+      await provider.getSetupUrl("external-state", "999999999999"),
     );
     const parameters = new URLSearchParams(target.hash.split("?")[1]);
 
@@ -34,6 +35,37 @@ describe("AwsProvider", () => {
     );
     expect(parameters.get("param_DrawsyExternalId")).toBe("external-state");
     expect(parameters.get("param_DrawsyAccountId")).toBe("999999999999");
+  });
+
+  it("uses a short-lived template URL for the private S3 object", async () => {
+    const getTemplateUrl = vi
+      .fn()
+      .mockResolvedValue(
+        "https://drawsy-templates.s3.ap-south-1.amazonaws.com/aws/read-role.yaml?token=short",
+      );
+    const provider = new AwsProvider(
+      {
+        ...config,
+        templateUrl: undefined,
+        templateS3: {
+          bucket: "drawsy-templates",
+          key: "aws/read-role.yaml",
+          region: "ap-south-1",
+        },
+      },
+      15_000,
+      { getTemplateUrl },
+    );
+
+    const target = new URL(
+      await provider.getSetupUrl("external-state", "999999999999"),
+    );
+    const parameters = new URLSearchParams(target.hash.split("?")[1]);
+
+    expect(getTemplateUrl).toHaveBeenCalledOnce();
+    expect(parameters.get("templateURL")).toBe(
+      "https://drawsy-templates.s3.ap-south-1.amazonaws.com/aws/read-role.yaml?token=short",
+    );
   });
 
   it("verifies the role with temporary credentials and discovers regions", async () => {
