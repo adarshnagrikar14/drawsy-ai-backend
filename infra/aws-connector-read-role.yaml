@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Read-only infrastructure access for Drawsy. This stack cannot modify workloads.
+
+Parameters:
+  DrawsyPrincipalArn:
+    Type: String
+    Description: Drawsy backend IAM role allowed to request temporary credentials.
+  DrawsyExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 2
+    MaxLength: 1224
+  DrawsyRoleName:
+    Type: String
+    Default: DrawsyInfrastructureReadRole
+    AllowedPattern: "[A-Za-z0-9+=,.@_-]{1,64}"
+  DrawsyAccountId:
+    Type: String
+    AllowedPattern: "[0-9]{12}"
+
+Resources:
+  DrawsyReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref DrawsyRoleName
+      Description: Lets Drawsy inspect infrastructure configuration using temporary, read-only sessions.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref DrawsyPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref DrawsyExternalId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+      Policies:
+        - PolicyName: DrawsyInfrastructureDiscovery
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InfrastructureInventory
+                Effect: Allow
+                Action:
+                  - cloudformation:Describe*
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:List*
+                  - cloudformation:StartResourceScan
+                  - config:BatchGetResourceConfig
+                  - config:Describe*
+                  - config:Get*
+                  - config:List*
+                  - config:SelectResourceConfig
+                  - ec2:DescribeRegions
+                  - resource-explorer-2:Get*
+                  - resource-explorer-2:List*
+                  - resource-explorer-2:Search
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: Role Drawsy verifies after this stack finishes.
+    Value: !GetAtt DrawsyReadRole.Arn
+
+Rules:
+  AccountIdMustMatch:
+    Assertions:
+      - Assert: !Equals [!Ref DrawsyAccountId, !Ref AWS::AccountId]
+        AssertDescription: Open this setup in the AWS account entered in Drawsy.
