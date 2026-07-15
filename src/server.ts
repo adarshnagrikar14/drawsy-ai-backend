@@ -18,6 +18,7 @@ import { GoogleWorkspaceProvider } from "./connectors/googleWorkspaceProvider.js
 import { NotionProvider } from "./connectors/notionProvider.js";
 import { SlackProvider } from "./connectors/slackProvider.js";
 import { GitHubProvider } from "./connectors/githubProvider.js";
+import { DefaultAiResourceService } from "./aiResources/service.js";
 
 const config = loadConfig();
 const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
@@ -58,6 +59,25 @@ const connectorProviders = config.connectors
         : []),
     ]
   : [];
+const kanbanService = new FirestoreKanbanService(
+  firebaseApp,
+  new KanbanCrypto(
+    config.kanban.encryptionKeys,
+    config.kanban.encryptionKeyVersion,
+    config.kanban.emailDigestKey,
+  ),
+  {
+    eventMs: config.kanban.eventRetentionMs,
+    operationMs: config.kanban.operationRetentionMs,
+    invitesPerHour: config.kanban.invitesPerHour,
+  },
+);
+const jiraService = config.jira
+  ? new AtlassianJiraService(
+      config.jira,
+      new FirestoreJiraConnectionStore(firebaseApp),
+    )
+  : undefined;
 const app = createApp({
   config,
   tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
@@ -67,25 +87,8 @@ const app = createApp({
     sceneStorage,
   ),
   commentService: new FirestoreCommentService(firebaseApp),
-  kanbanService: new FirestoreKanbanService(
-    firebaseApp,
-    new KanbanCrypto(
-      config.kanban.encryptionKeys,
-      config.kanban.encryptionKeyVersion,
-      config.kanban.emailDigestKey,
-    ),
-    {
-      eventMs: config.kanban.eventRetentionMs,
-      operationMs: config.kanban.operationRetentionMs,
-      invitesPerHour: config.kanban.invitesPerHour,
-    },
-  ),
-  jiraService: config.jira
-    ? new AtlassianJiraService(
-        config.jira,
-        new FirestoreJiraConnectionStore(firebaseApp),
-      )
-    : undefined,
+  kanbanService,
+  jiraService,
   connectorService: config.connectors
     ? new DefaultConnectorService(
         config.connectors,
@@ -93,6 +96,13 @@ const app = createApp({
         new FirestoreConnectorConnectionStore(firebaseApp),
       )
     : undefined,
+  aiResourceService: new DefaultAiResourceService(
+    config.r2.encryptionKey,
+    config.connectors?.aiGrantTtlMs ?? 10 * 60 * 1000,
+    config.connectors?.aiMaxOutputBytes ?? 256 * 1024,
+    kanbanService,
+    jiraService,
+  ),
 });
 
 const server = app.listen(config.port, config.host, () => {
