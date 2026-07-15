@@ -26,9 +26,19 @@ const capability = z.enum([
   "github",
   "read-ai",
   "fireflies",
+  "aws",
 ]);
 const remoteMcpCapability = z.enum(["read-ai", "fireflies"]);
 const providerApiCapability = z.enum([
+  "mail",
+  "calendar",
+  "drive",
+  "notion",
+  "slack",
+  "github",
+  "aws",
+]);
+const searchableProviderApiCapability = z.enum([
   "mail",
   "calendar",
   "drive",
@@ -102,6 +112,7 @@ const githubPageCursor = z
   .trim()
   .regex(/^\d{1,6}$/)
   .optional();
+const awsRegion = z.string().regex(/^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/);
 const remoteMcpToolName = z
   .string()
   .trim()
@@ -119,8 +130,38 @@ export const connectorAiExecutionRequestSchema = z.union([
   z
     .object({
       ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("aws"),
+      kind: z.literal("aws_regions"),
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("list"),
+      capability: z.literal("aws"),
+      kind: z.literal("aws_cloudformation_stacks"),
+      region: awsRegion,
+      cursor,
+      limit,
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
       operation: z.literal("search"),
-      capability: providerApiCapability,
+      capability: z.literal("aws"),
+      query: z.string().trim().min(1).max(2_000),
+      region: awsRegion,
+      cursor,
+      limit: z.number().int().min(1).max(100).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...executionContextSchema,
+      operation: z.literal("search"),
+      capability: searchableProviderApiCapability,
       query: z.string().trim().min(1).max(2_000),
       cursor,
       limit: z.number().int().min(1).max(20).optional(),

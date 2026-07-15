@@ -140,6 +140,12 @@ const createService = () => {
   const getAuthorizationStatus = vi
     .fn()
     .mockResolvedValue({ status: "pending" as const });
+  const getSetupUrl = vi.fn().mockResolvedValue({
+    setupUrl: "https://console.aws.amazon.com/cloudformation/home",
+    attemptId: "attempt-aws",
+    setupToken: "a".repeat(43),
+  });
+  const verifySetup = vi.fn().mockResolvedValue({ status: "pending" as const });
   const deleteConnection = vi.fn().mockResolvedValue(undefined);
   const getAuthorizedCredential = vi.fn();
   const createAiGrant = vi.fn().mockResolvedValue({
@@ -161,6 +167,8 @@ const createService = () => {
     completeInstallation,
     failAuthorization,
     getAuthorizationStatus,
+    getSetupUrl,
+    verifySetup,
     deleteConnection,
     getAuthorizedCredential,
     createAiGrant,
@@ -173,6 +181,8 @@ const createService = () => {
     completeAuthorization,
     completeInstallation,
     getAuthorizationStatus,
+    getSetupUrl,
+    verifySetup,
     deleteConnection,
     createAiGrant,
     executeAiRequest,
@@ -240,6 +250,31 @@ describe("Connectors API", () => {
     expect(getAuthorizationUrl).toHaveBeenCalledWith(
       "user-1",
       "google-workspace",
+    );
+  });
+
+  it("starts and verifies guided AWS account setup", async () => {
+    const { service, getSetupUrl, verifySetup } = createService();
+    const app = appFor(service);
+    const start = await request(app)
+      .post("/v1/connectors/aws/setup/start")
+      .set("authorization", "Bearer valid")
+      .send({ accountId: "123456789012" });
+
+    expect(start.status).toBe(200);
+    expect(getSetupUrl).toHaveBeenCalledWith("user-1", "aws", "123456789012");
+
+    const verify = await request(app)
+      .post("/v1/connectors/aws/setup/verify")
+      .set("authorization", "Bearer valid")
+      .send({ accountId: "123456789012", setupToken: "a".repeat(43) });
+    expect(verify.status).toBe(200);
+    expect(verify.body).toEqual({ status: "pending" });
+    expect(verifySetup).toHaveBeenCalledWith(
+      "user-1",
+      "aws",
+      "123456789012",
+      "a".repeat(43),
     );
   });
 

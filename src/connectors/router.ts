@@ -15,6 +15,8 @@ const id = z.string().trim().min(1).max(256);
 const providerId = z.enum(connectorProviderIds);
 const oauthCode = z.string().trim().min(1).max(4_096);
 const aiGrant = z.string().min(32).max(16_384);
+const awsAccountId = z.string().regex(/^\d{12}$/);
+const setupToken = z.string().regex(/^[A-Za-z0-9_-]{32,256}$/);
 
 const userId = (response: Response) => {
   const user = response.locals.user;
@@ -177,6 +179,45 @@ export const createConnectorsRouter = (
       const values = z.object({ providerId }).parse(request.params);
       response.json(
         await service.getAuthorizationUrl(userId(response), values.providerId),
+      );
+    },
+  );
+  router.post(
+    "/connectors/:providerId/setup/start",
+    async (request, response) => {
+      const { providerId: selectedProvider } = z
+        .object({ providerId })
+        .parse(request.params);
+      const { accountId } = z
+        .object({ accountId: awsAccountId })
+        .strict()
+        .parse(request.body);
+      response.json(
+        await service.getSetupUrl(
+          userId(response),
+          selectedProvider,
+          accountId,
+        ),
+      );
+    },
+  );
+  router.post(
+    "/connectors/:providerId/setup/verify",
+    async (request, response) => {
+      const { providerId: selectedProvider } = z
+        .object({ providerId })
+        .parse(request.params);
+      const values = z
+        .object({ accountId: awsAccountId, setupToken })
+        .strict()
+        .parse(request.body);
+      response.json(
+        await service.verifySetup(
+          userId(response),
+          selectedProvider,
+          values.accountId,
+          values.setupToken,
+        ),
       );
     },
   );

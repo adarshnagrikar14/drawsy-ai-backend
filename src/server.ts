@@ -23,6 +23,7 @@ import {
   ReadAiProvider,
 } from "./connectors/remoteMcpProvider.js";
 import { DefaultAiResourceService } from "./aiResources/service.js";
+import { AwsProvider } from "./connectors/awsProvider.js";
 
 const config = loadConfig();
 const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
@@ -73,6 +74,14 @@ const connectorProviders = config.connectors
         ? [
             new FirefliesProvider(
               config.connectors.fireflies,
+              config.connectors.httpTimeoutMs,
+            ),
+          ]
+        : []),
+      ...(config.connectors.aws
+        ? [
+            new AwsProvider(
+              config.connectors.aws,
               config.connectors.httpTimeoutMs,
             ),
           ]

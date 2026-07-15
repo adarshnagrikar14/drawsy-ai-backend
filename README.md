@@ -40,6 +40,8 @@ the Excalidraw editor core.
 
 - `GET /v1/connectors` - lists configured providers and the user's connections
 - `POST /v1/connectors/:providerId/oauth/start` - starts provider OAuth
+- `POST /v1/connectors/:providerId/setup/start` - starts a guided non-OAuth provider setup such as AWS
+- `POST /v1/connectors/:providerId/setup/verify` - verifies the provider setup without a popup callback
 - `GET /v1/connectors/oauth/attempts/:attemptId` - reports OAuth completion
 - `GET /v1/connectors/:providerId/oauth/callback` - public OAuth callback
 - `DELETE /v1/connectors/connections/:connectionId` - revokes and removes access
@@ -95,6 +97,12 @@ Provider applications must be registered before their cards become available:
 - Fireflies: dynamically registered public OAuth client for
   `https://api.fireflies.ai/mcp`, using the backend
   `/v1/connectors/fireflies/oauth/callback` URI and PKCE.
+- AWS: deploy `infra/aws-connector-read-role.yaml` at the configured public
+  HTTPS template URL. The backend runtime uses its normal AWS credential chain
+  as `AWS_CONNECTOR_PRINCIPAL_ARN`, assumes the customer role with a unique
+  external ID, and stores only the encrypted role descriptor. The connection
+  exposes enabled regions, Resource Explorer inventory, and CloudFormation
+  stacks/templates. It does not read application data or expose AWS writes.
 
 Use HTTPS callback/success URLs and a deployment secret manager in production.
 
@@ -198,6 +206,10 @@ npm start
 - `GITHUB_APP_PRIVATE_KEY_PATH`: local or mounted secret-file alternative to the base64 value
 - `READ_AI_MCP_OAUTH_CLIENT_ID`, `READ_AI_MCP_OAUTH_REDIRECT_URI`: Read AI remote MCP public OAuth client
 - `FIREFLIES_MCP_OAUTH_CLIENT_ID`, `FIREFLIES_MCP_OAUTH_REDIRECT_URI`: Fireflies remote MCP public OAuth client
+- `AWS_CONNECTOR_PRINCIPAL_ARN`: stable IAM role ARN used by the Drawsy backend runtime
+- `AWS_CONNECTOR_TEMPLATE_URL`: public HTTPS URL serving `infra/aws-connector-read-role.yaml`
+- `AWS_CONNECTOR_ROLE_NAME`: deterministic customer-account role name; default `DrawsyInfrastructureReadRole`
+- `AWS_CONNECTOR_SETUP_REGION`: region where the guided CloudFormation stack is created; default `us-east-1`
 - `CONNECTORS_OAUTH_SUCCESS_URL`: trusted frontend URL after OAuth completes
 - `CONNECTOR_ENCRYPTION_KEY`: optional dedicated base64-encoded 32-byte token key
 - `CONNECTOR_ENCRYPTION_KEY_VERSION`: positive current connector key version

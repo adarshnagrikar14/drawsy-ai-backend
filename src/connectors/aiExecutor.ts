@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ApiError } from "../http/apiError.js";
 import { connectorAiResourceIdSchema } from "./aiSchemas.js";
 import { RemoteMcpClient } from "./remoteMcpClient.js";
+import { AwsConnectorClient } from "./awsClient.js";
 
 import type {
   ConnectorAiExecutionRequest,
@@ -368,12 +369,14 @@ const githubPullRequestSchema = z
 
 export class ConnectorAiExecutor {
   private readonly remoteMcpClient: RemoteMcpClient;
+  private readonly awsClient: AwsConnectorClient;
 
   constructor(
     private readonly timeoutMs: number,
     private readonly maxOutputBytes: number,
   ) {
     this.remoteMcpClient = new RemoteMcpClient(timeoutMs, maxOutputBytes);
+    this.awsClient = new AwsConnectorClient(timeoutMs);
   }
 
   async execute(
@@ -454,6 +457,10 @@ export class ConnectorAiExecutor {
         return this.listSlackChannels(accessToken, request);
       case "slack_messages":
         return this.listSlackMessages(accessToken, request);
+      case "aws_regions":
+        return this.listAwsRegions(accessToken);
+      case "aws_cloudformation_stacks":
+        return this.listAwsStacks(accessToken, request);
       default:
         return this.unreachable(request);
     }
@@ -477,6 +484,8 @@ export class ConnectorAiExecutor {
         return this.searchSlack(accessToken, request);
       case "github":
         return this.searchGitHub(accessToken, request);
+      case "aws":
+        return this.searchAws(accessToken, request);
       case "read-ai":
       case "fireflies":
         throw new ApiError(
@@ -485,7 +494,7 @@ export class ConnectorAiExecutor {
           "Use the remote MCP tools for this connector.",
         );
       default:
-        return this.unreachable(request.capability);
+        return this.unreachable(request);
     }
   }
 
@@ -512,6 +521,8 @@ export class ConnectorAiExecutor {
         return this.readSlack(accessToken, resource);
       case "github":
         return this.readGitHub(accessToken, resource);
+      case "aws":
+        return this.readAws(accessToken, resource);
       case "read-ai":
       case "fireflies":
         throw new ApiError(
@@ -522,6 +533,243 @@ export class ConnectorAiExecutor {
       default:
         return this.unreachable(request.capability);
     }
+  }
+
+  private async listAwsRegions(accessToken: string) {
+    const regions = await this.awsClient.listRegions(accessToken);
+    return {
+      operation: "list" as const,
+      capability: "aws" as const,
+      kind: "aws_regions" as const,
+      items: regions.map((region): ConnectorAiItem => ({
+        id: this.encodeResourceId({
+          providerId: "aws",
+          capability: "aws",
+          type: "aws_region",
+          id: region,
+        }),
+        type: "aws_region",
+        title: region,
+        summary: "Enabled AWS region",
+        content: null,
+        url: `https://console.aws.amazon.com/console/home?region=${encodeURIComponent(
+          region,
+        )}`,
+        author: null,
+        createdAt: null,
+        updatedAt: null,
+        metadata: { region },
+      })),
+      nextCursor: null,
+    };
+  }
+
+  private async listAwsStacks(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "list"; kind: "aws_cloudformation_stacks" }
+    >,
+  ) {
+    const result = await this.awsClient.listStacks({
+      accessToken,
+      region: request.region,
+      cursor: request.cursor,
+      limit: request.limit || 50,
+    });
+    return {
+      operation: "list" as const,
+      capability: "aws" as const,
+      kind: "aws_cloudformation_stacks" as const,
+      items: result.stacks
+        .filter((stack) => stack.StackName && stack.StackId)
+        .map((stack): ConnectorAiItem => ({
+          id: this.encodeResourceId({
+            providerId: "aws",
+            capability: "aws",
+            type: "aws_cloudformation_stack",
+            id: stack.StackId!,
+            parentId: request.region,
+          }),
+          type: "aws_cloudformation_stack",
+          title: stack.StackName!,
+          summary: stack.TemplateDescription || stack.StackStatus || null,
+          content: null,
+          url: `https://${encodeURIComponent(
+            request.region,
+          )}.console.aws.amazon.com/cloudformation/home?region=${encodeURIComponent(
+            request.region,
+          )}#/stacks/stackinfo?stackId=${encodeURIComponent(stack.StackId!)}`,
+          author: null,
+          createdAt: stack.CreationTime?.toISOString() || null,
+          updatedAt:
+            stack.LastUpdatedTime?.toISOString() ||
+            stack.CreationTime?.toISOString() ||
+            null,
+          metadata: {
+            region: request.region,
+            status: stack.StackStatus || null,
+            driftStatus: stack.DriftInformation?.StackDriftStatus || null,
+          },
+        })),
+      nextCursor: result.nextCursor,
+    };
+  }
+
+  private async searchAws(
+    accessToken: string,
+    request: Extract<
+      ConnectorAiExecutionRequest,
+      { operation: "search"; capability: "aws" }
+    >,
+  ) {
+    const result = await this.awsClient.searchResources({
+      accessToken,
+      region: request.region,
+      query: request.query,
+      cursor: request.cursor,
+      limit: request.limit || 20,
+    });
+    return {
+      operation: "search" as const,
+      capability: "aws" as const,
+      items: (result.Resources || [])
+        .filter((resource) => resource.Arn)
+        .map((resource): ConnectorAiItem => ({
+          id: this.encodeResourceId({
+            providerId: "aws",
+            capability: "aws",
+            type: "aws_resource",
+            id: resource.Arn!,
+            parentId: resource.Region || request.region,
+          }),
+          type: resource.ResourceType || "aws_resource",
+          title:
+            resource.Arn!.split(/[/:]/).filter(Boolean).at(-1) || resource.Arn!,
+          summary:
+            [resource.Service, resource.ResourceType]
+              .filter(Boolean)
+              .join(" · ") || null,
+          content: null,
+          url: null,
+          author: resource.OwningAccountId || null,
+          createdAt: null,
+          updatedAt: resource.LastReportedAt?.toISOString() || null,
+          metadata: {
+            arn: resource.Arn!,
+            accountId: resource.OwningAccountId || null,
+            region: resource.Region || request.region,
+            service: resource.Service || null,
+            resourceType: resource.ResourceType || null,
+          },
+        })),
+      nextCursor: result.NextToken || null,
+    };
+  }
+
+  private async readAws(
+    accessToken: string,
+    resource: ResourceId,
+  ): Promise<ConnectorAiExecutionResult> {
+    if (resource.type === "aws_region") {
+      return {
+        operation: "read" as const,
+        capability: "aws" as const,
+        item: {
+          id: this.encodeResourceId(resource),
+          type: resource.type,
+          title: resource.id,
+          summary: "Enabled AWS region",
+          content: null,
+          url: `https://console.aws.amazon.com/console/home?region=${encodeURIComponent(
+            resource.id,
+          )}`,
+          author: null,
+          createdAt: null,
+          updatedAt: null,
+          metadata: { region: resource.id },
+        } satisfies ConnectorAiItem,
+      };
+    }
+    const region = resource.parentId;
+    if (!region) throw this.invalidResource();
+    if (resource.type === "aws_cloudformation_stack") {
+      const result = await this.awsClient.getStack(
+        accessToken,
+        region,
+        resource.id,
+      );
+      const stack = result.stack;
+      return {
+        operation: "read" as const,
+        capability: "aws" as const,
+        item: {
+          id: this.encodeResourceId(resource),
+          type: resource.type,
+          title: stack?.StackName || resource.id,
+          summary: stack?.Description || stack?.StackStatus || null,
+          content: JSON.stringify(
+            {
+              stack,
+              resources: result.resources,
+              template: result.templateBody,
+              templateStages: result.stagesAvailable,
+            },
+            null,
+            2,
+          ),
+          url: `https://${encodeURIComponent(
+            region,
+          )}.console.aws.amazon.com/cloudformation/home?region=${encodeURIComponent(
+            region,
+          )}#/stacks/stackinfo?stackId=${encodeURIComponent(resource.id)}`,
+          author: null,
+          createdAt: stack?.CreationTime?.toISOString() || null,
+          updatedAt:
+            stack?.LastUpdatedTime?.toISOString() ||
+            stack?.CreationTime?.toISOString() ||
+            null,
+          metadata: {
+            region,
+            status: stack?.StackStatus || null,
+            resourceCount: result.resources.length,
+          },
+        } satisfies ConnectorAiItem,
+      };
+    }
+    if (resource.type === "aws_resource") {
+      const result = await this.awsClient.getResource(
+        accessToken,
+        region,
+        resource.id,
+      );
+      const value = result;
+      return {
+        operation: "read" as const,
+        capability: "aws" as const,
+        item: {
+          id: this.encodeResourceId(resource),
+          type: value?.ResourceType || resource.type,
+          title:
+            resource.id.split(/[/:]/).filter(Boolean).at(-1) || resource.id,
+          summary:
+            [value?.Service, value?.ResourceType].filter(Boolean).join(" · ") ||
+            null,
+          content: JSON.stringify(value || { arn: resource.id }, null, 2),
+          url: null,
+          author: value?.OwningAccountId || null,
+          createdAt: null,
+          updatedAt: value?.LastReportedAt?.toISOString() || null,
+          metadata: {
+            arn: resource.id,
+            region,
+            service: value?.Service || null,
+            resourceType: value?.ResourceType || null,
+          },
+        } satisfies ConnectorAiItem,
+      };
+    }
+    throw this.invalidResource();
   }
 
   private async searchMail(

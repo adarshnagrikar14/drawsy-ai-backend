@@ -254,7 +254,7 @@ describe("ConnectorAiExecutor", () => {
 
     const executor = new ConnectorAiExecutor(15_000, 256 * 1024);
     const cases: Array<{
-      capability: ConnectorCapability;
+      capability: Exclude<ConnectorCapability, "aws">;
       providerId: ConnectorProviderId;
       query: string;
       expectedType: string;
