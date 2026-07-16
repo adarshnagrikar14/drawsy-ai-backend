@@ -151,7 +151,7 @@ export const connectorAiExecutionRequestSchema = z.union([
       ...executionContextSchema,
       operation: z.literal("search"),
       capability: z.literal("aws"),
-      query: z.string().trim().min(1).max(2_000),
+      query: z.string().trim().max(1_280),
       region: awsRegion,
       cursor,
       limit: z.number().int().min(1).max(100).optional(),
