@@ -89,9 +89,28 @@ export class AwsConnectorClient {
         { abortSignal: AbortSignal.timeout(this.timeoutMs) },
       );
     } catch (error) {
+      if (
+        error instanceof Error &&
+        ["UnauthorizedException", "ResourceNotFoundException"].includes(
+          error.name,
+        )
+      ) {
+        throw new ApiError(
+          409,
+          "connector_aws_resource_explorer_unavailable",
+          "AWS Resource Explorer has no usable view in this region. Do not retry this search in the same turn; use CloudFormation inventory, or enable Resource Explorer in AWS for broader discovery.",
+        );
+      }
+      if (error instanceof Error && error.name === "ValidationException") {
+        throw new ApiError(
+          400,
+          "connector_aws_query_invalid",
+          "AWS rejected the Resource Explorer query. Use an empty query for all discoverable resources, or valid Resource Explorer search filters.",
+        );
+      }
       throw this.providerError(
         error,
-        "AWS Resource Explorer could not search this region. Check that the region is enabled for the role.",
+        "AWS Resource Explorer could not search this region. Do not retry this search in the same turn; use CloudFormation inventory instead.",
       );
     }
   }
