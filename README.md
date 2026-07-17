@@ -16,7 +16,7 @@ flowchart LR
   Agent["Drawsy MCP"] -->|"Short-lived turn grant"| API
 ```
 
-The browser proves user identity with Firebase. This service then enforces ownership, membership, version, capability, and provider boundaries. Provider credentials remain server-side; the Drawsy MCP receives only narrowly scoped, expiring grants.
+The browser proves user identity with Firebase. This service then enforces ownership, membership, version, capability, and provider boundaries. Provider credentials remain server-side; the Drawsy MCP receives only narrowly scoped, expiring grants. This service does not run Codex or OpenCode, persist their session-only provider keys, or receive a selected coding workspace; those responsibilities remain in `drawsy-ai-mcp`.
 
 ## OpenAI Build Week 2026
 
