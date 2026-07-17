@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Runtime identity and private template storage for the Drawsy AWS connector.
+
+Resources:
+  ConnectorTemplateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub drawsy-connector-templates-${AWS::AccountId}-${AWS::Region}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  ConnectorBackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DrawsyConnectorBackendRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DrawsyConnectorRuntime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadConnectorTemplate
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub ${ConnectorTemplateBucket.Arn}/connectors/aws/aws-connector-read-role.yaml
+              - Sid: AssumeCustomerReadRole
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: arn:aws:iam::*:role/DrawsyInfrastructureReadRole
+
+  ConnectorBackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: DrawsyConnectorBackendProfile
+      Roles:
+        - !Ref ConnectorBackendRole
+
+Outputs:
+  PrincipalArn:
+    Description: Principal trusted by customer connector roles.
+    Value: !GetAtt ConnectorBackendRole.Arn
+  TemplateBucket:
+    Description: Private bucket containing the customer setup template.
+    Value: !Ref ConnectorTemplateBucket

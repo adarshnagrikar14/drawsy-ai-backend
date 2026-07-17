@@ -49,7 +49,6 @@ Resources:
                   - cloudformation:GetTemplate
                   - cloudformation:GetTemplateSummary
                   - cloudformation:List*
-                  - cloudformation:StartResourceScan
                   - config:BatchGetResourceConfig
                   - config:Describe*
                   - config:Get*
