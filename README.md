@@ -20,11 +20,8 @@ The browser proves user identity with Firebase. This service then enforces owner
 
 ## OpenAI Build Week 2026
 
-This service existed before the July 13, 2026 submission window. Only the changes after the official 9:00 AM PT cutoff are claimed for Build Week.
-
-- **Boundary commit:** [`e75fc9f`](https://github.com/adarshnagrikar14/drawsy-ai-backend/commit/e75fc9f687361abf077912953729561174095d75)
+- **Submission window opened:** July 13, 2026 at 9:00 AM PT.
 - **First qualifying commit:** [`99e4e8a`](https://github.com/adarshnagrikar14/drawsy-ai-backend/commit/99e4e8ad1fef7d261073c0d15f8602da456eedaa)
-- **Evidence range:** [`e75fc9f...main`](https://github.com/adarshnagrikar14/drawsy-ai-backend/compare/e75fc9f687361abf077912953729561174095d75...main)
 
 Qualifying work includes turn-scoped connector and first-party resource grants, normalized provider execution, granular Google/GitHub/Notion/Slack tools, GitHub App installations, official Read AI and Fireflies remote MCP clients, read-only AWS cross-account inventory, Kanban ordering fixes, deployment packaging, and focused integration tests.
 
