@@ -1,8 +1,36 @@
 # Drawsy AI Backend
 
-Authenticated workspace API for Drawsy AI. It coordinates Firebase identity,
-Firestore workspace metadata, and Cloudflare R2 canvas scenes without replacing
-the Excalidraw editor core.
+Authenticated workspace, resource, and connector control plane for Drawsy AI. It coordinates Firebase identity, Firestore metadata, encrypted Cloudflare R2 scenes, Kanban/Jira resources, provider OAuth, and read-only connected-source execution without replacing the Excalidraw editor core.
+
+> **Repository status:** private for now. It is shared directly with OpenAI Build Week judges and may be published after a dedicated security and release review. No license is granted by repository access alone.
+
+## Product role
+
+```mermaid
+flowchart LR
+  Client["Drawsy web client"] -->|"Firebase ID token"| API["Drawsy backend"]
+  API --> Firestore["Firestore metadata"]
+  API --> R2["Encrypted R2 scenes"]
+  API --> Resources["Kanban · Jira"]
+  API --> Providers["Connected providers"]
+  Agent["Drawsy MCP"] -->|"Short-lived turn grant"| API
+```
+
+The browser proves user identity with Firebase. This service then enforces ownership, membership, version, capability, and provider boundaries. Provider credentials remain server-side; the Drawsy MCP receives only narrowly scoped, expiring grants.
+
+## OpenAI Build Week 2026
+
+This service existed before the July 13, 2026 submission window. Only the changes after the official 9:00 AM PT cutoff are claimed for Build Week.
+
+- **Boundary commit:** [`e75fc9f`](https://github.com/adarshnagrikar14/drawsy-ai-backend/commit/e75fc9f687361abf077912953729561174095d75)
+- **First qualifying commit:** [`99e4e8a`](https://github.com/adarshnagrikar14/drawsy-ai-backend/commit/99e4e8ad1fef7d261073c0d15f8602da456eedaa)
+- **Evidence range:** [`e75fc9f...main`](https://github.com/adarshnagrikar14/drawsy-ai-backend/compare/e75fc9f687361abf077912953729561174095d75...main)
+
+Qualifying work includes turn-scoped connector and first-party resource grants, normalized provider execution, granular Google/GitHub/Notion/Slack tools, GitHub App installations, official Read AI and Fireflies remote MCP clients, read-only AWS cross-account inventory, Kanban ordering fixes, deployment packaging, and focused integration tests.
+
+Codex running GPT-5.6 accelerated the service design, provider research, TypeScript implementation, test coverage, and deployment debugging. The product owner chose the authorization model: sources are explicit per turn, credentials never enter the model runtime, Jira remains read-only, Kanban mutations reuse normal board permissions, and AWS access is inventory-only.
+
+The main product record and complete repository set are documented in [`excal-ai`](https://github.com/adarshnagrikar14/excal-ai) under its **#Build Week Special** section.
 
 ## Current API
 
