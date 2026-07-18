@@ -25,6 +25,8 @@ The browser proves user identity with Firebase. This service then enforces owner
 
 Qualifying work includes turn-scoped connector and first-party resource grants, normalized provider execution, granular Google/GitHub/Notion/Slack tools, GitHub App installations, official Read AI and Fireflies remote MCP clients, read-only AWS cross-account inventory, Kanban ordering fixes, deployment packaging, and focused integration tests.
 
+Precision diagram delivery is implemented by the Drawsy client and MCP bridge. This API continues to provide the authorized, versioned canvas data they operate on; it does not interpret diagram meaning or impose layout rules.
+
 Codex running GPT-5.6 accelerated the service design, provider research, TypeScript implementation, test coverage, and deployment debugging. The product owner chose the authorization model: sources are explicit per turn, credentials never enter the model runtime, Jira remains read-only, Kanban mutations reuse normal board permissions, and AWS access is inventory-only.
 
 The main product record and complete repository set are documented in [`excal-ai`](https://github.com/adarshnagrikar14/excal-ai) under its **#Build Week Special** section.
