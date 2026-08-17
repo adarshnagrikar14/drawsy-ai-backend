@@ -193,6 +193,25 @@ describe("Drawsy backend API", () => {
     expect(unknown.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  it("answers authenticated preflight requests before route authentication", async () => {
+    const { verifier } = createVerifier();
+    const response = await request(createTestApp(verifier))
+      .options("/v1/canvases/example")
+      .set("origin", "http://localhost:3001")
+      .set("access-control-request-method", "PUT")
+      .set("access-control-request-headers", "authorization,content-type");
+
+    expect(response.status).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3001",
+    );
+    expect(response.headers["access-control-allow-credentials"]).toBe("true");
+    expect(response.headers["access-control-allow-methods"]).toContain("PUT");
+    expect(response.headers["access-control-allow-headers"]).toContain(
+      "authorization",
+    );
+  });
+
   it("returns a stable not-found error", async () => {
     const { verifier } = createVerifier();
     const response = await request(createTestApp(verifier)).get("/missing");
