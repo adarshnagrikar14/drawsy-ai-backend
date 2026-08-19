@@ -75,6 +75,24 @@ The main product record and complete repository set are documented in [`excal-ai
 - `POST /v1/connectors/ai/grants` - mints a short-lived, user-authenticated connector grant for one local AI turn
 - `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only provider operations; Read AI and Fireflies proxy their official remote MCP tools
 
+### Personal context (HydraDB)
+
+- `GET /v1/hydra/status` - reports whether the signed-in user's personal memory is available and which sources are syncing
+- `POST /v1/hydra/query` - retrieves that user's relevant memory and connector context
+- `POST /v1/hydra/turns` - stores a completed signed-in chat turn as memory
+- `DELETE /v1/hydra/memory` - removes selected personal memories
+
+Hydra is an automatic signed-in context layer, not an OAuth connector. Hosted
+HydraDB stores syncable connector knowledge in the authenticated user's
+collection through the v2 SDK. The local memory path uses the official
+[HydraDB OSS repository](https://github.com/hydra-db/hydradb) as a separate
+graph-node and calls its documented OpenCypher HTTP API; the backend stores
+completed chat turns, ownership, and source relationships there. The two stores
+are queried in parallel and either one can fail without blocking the other.
+The OSS checkout used for local validation is
+`/Users/adarsh/Desktop/excal-ai/hydradb` with the fork
+`https://github.com/adarshnagrikar14/hydradb`.
+
 The connector control plane owns OAuth, encrypted credentials, account-scoped
 permissions, refresh, and revocation for Google Workspace, Notion, Slack,
 GitHub, Read AI, and Fireflies. One Google Workspace account supplies Mail, Calendar, and Drive with
@@ -198,6 +216,15 @@ to a service-account JSON file. Do not commit that file. On Google Cloud,
 Application Default Credentials use the service account attached to the
 runtime, so no credential file is required.
 
+For the full local hybrid path, run HydraDB's documented native/runtime smoke
+checks first, keep its HTTP endpoint on `127.0.0.1:18443`, then set
+`HYDRA_ENABLED=true` with `HYDRA_HOSTED_API_KEY`/`HYDRA_HOSTED_DATABASE` for
+connector knowledge and `HYDRA_MEMORY_AUTH_TOKEN` plus the local graph scope for
+private memory. The older `HYDRA_DB_*` names remain accepted as migration
+aliases. Without `HYDRA_ENABLED=true`, the Hydra router is intentionally absent
+and authenticated status requests return `404`. The Drawsy backend remains the
+only browser-facing service.
+
 ## Commands
 
 ```bash
@@ -217,6 +244,11 @@ npm start
 - `APP_ALLOWED_ORIGINS`: comma-separated exact browser origins
 - `FIREBASE_PROJECT_ID`: Firebase project used to verify token audience
 - `APP_SCENE_SIZE_LIMIT_BYTES`: maximum accepted serialized canvas size
+- `HYDRA_ENABLED`: enables authenticated personal context and connector sync
+- `HYDRA_HOSTED_API_KEY`, `HYDRA_HOSTED_DATABASE`, `HYDRA_HOSTED_BASE_URL`: server-only hosted HydraDB connector-knowledge settings
+- `HYDRA_MEMORY_AUTH_TOKEN`, `HYDRA_MEMORY_BASE_URL`, `HYDRA_MEMORY_NAMESPACE`, `HYDRA_MEMORY_GRAPH_ID`, `HYDRA_MEMORY_CELL_ID`: server-only local OSS memory settings
+- `HYDRA_DB_TIMEOUT_SECONDS`, `HYDRA_DB_MAX_RETRIES`: Hydra request controls
+- `HYDRA_SYNC_INTERVAL_SECONDS`, `HYDRA_SYNC_PAGE_SIZE`, `HYDRA_QUERY_MAX_RESULTS`: connector sync and personal-context limits
 - `R2_ENDPOINT_URL`: S3-compatible Cloudflare R2 endpoint
 - `R2_BUCKET_NAME`: owned R2 bucket
 - `R2_REGION`: normally `auto` for R2
