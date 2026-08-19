@@ -18,7 +18,7 @@ export interface HydraKnowledgeClient {
     collection: string,
     records: HydraKnowledgeRecord[],
   ): Promise<string[]>;
-  waitForIndexing(collection: string, ids: string[]): Promise<void>;
+  checkIndexing(collection: string, ids: string[]): Promise<string[]>;
   queryKnowledge(
     collection: string,
     input: HydraQueryInput,
@@ -85,41 +85,34 @@ export class HydraDbClient implements HydraKnowledgeClient {
       .filter((id): id is string => Boolean(id));
   }
 
-  async waitForIndexing(collection: string, ids: string[]) {
-    if (!ids.length) return;
+  async checkIndexing(collection: string, ids: string[]) {
+    if (!ids.length) return [];
     await this.ensureReady();
-    const deadline = Date.now() + this.settings.timeoutSeconds * 1000;
     const pending = new Set(ids);
-    while (pending.size && Date.now() < deadline) {
-      const response = await this.client.context.status({
-        database: this.settings.database,
-        collection,
-        ids: [...pending],
-      });
-      const statuses = responseData(response).statuses || [];
-      for (const status of statuses) {
-        if (!status.id) continue;
-        if (
-          status.indexingStatus === "completed" ||
-          status.indexingStatus === "graph_creation"
-        ) {
-          pending.delete(status.id);
-        } else if (
-          status.indexingStatus === "failed" ||
-          status.indexingStatus === "errored"
-        ) {
-          throw new Error(
-            status.errorMessage || `HydraDB failed to index ${status.id}.`,
-          );
-        }
+    const response = await this.client.context.status({
+      database: this.settings.database,
+      collection,
+      ids: [...pending],
+    });
+    const statuses = responseData(response).statuses || [];
+    for (const status of statuses) {
+      if (!status.id) continue;
+      if (status.indexingStatus === "completed") {
+        pending.delete(status.id);
+      } else if (
+        status.indexingStatus === "failed" ||
+        status.indexingStatus === "errored"
+      ) {
+        const failure = [status.errorCode, status.errorMessage]
+          .filter((value): value is string => Boolean(value))
+          .join(": ");
+        throw new Error(failure || `HydraDB failed to index ${status.id}.`);
       }
-      if (pending.size) await sleep(1_000);
     }
-    if (pending.size) {
-      throw new Error(
-        `HydraDB indexing timed out for ${pending.size} source(s).`,
-      );
-    }
+    // Hydra keeps sources in queued, processing, and graph_creation while
+    // indexing continues. They are not failures and must be checked again
+    // later instead of blocking connector synchronization.
+    return [...pending];
   }
 
   async queryKnowledge(
@@ -144,6 +137,7 @@ export class HydraDbClient implements HydraKnowledgeClient {
     return {
       context: buildString(response),
       chunks: data.chunks || [],
+      sources: data.sources || [],
       graphContext: data.graphContext || null,
       availability: {
         memory: false,

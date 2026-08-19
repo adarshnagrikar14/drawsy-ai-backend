@@ -497,6 +497,11 @@ export class HydraOssClient implements HydraMemoryClient {
         )
         .join("\n\n"),
       chunks: selected,
+      sources: selected.map((record) => ({
+        id: record.id,
+        title: "Personal memory",
+        type: "memory",
+      })),
       graphContext: {
         provider: "hydradb-oss",
         graphId: this.settings.graphId,
