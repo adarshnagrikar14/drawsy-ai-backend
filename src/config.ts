@@ -21,6 +21,38 @@ const environmentSchema = z.object({
   APP_HOST: z.string().trim().min(1).default("127.0.0.1"),
   APP_PORT: z.coerce.number().int().min(1).max(65_535).default(3004),
   APP_ALLOWED_ORIGINS: z.string().default(""),
+  HYDRA_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  // HYDRA_DB_* is retained as a migration alias for the hosted v2 API. The
+  // runtime now keeps hosted connector knowledge and local memory separate.
+  HYDRA_DB_PROVIDER: z.enum(["managed", "oss"]).optional(),
+  HYDRA_DB_API_KEY: optionalText,
+  HYDRA_DB_AUTH_TOKEN: optionalText,
+  HYDRA_DB_DATABASE: optionalText,
+  HYDRA_DB_BASE_URL: optionalUrl,
+  HYDRA_HOSTED_API_KEY: optionalText,
+  HYDRA_HOSTED_DATABASE: optionalText,
+  HYDRA_HOSTED_BASE_URL: optionalUrl,
+  HYDRA_MEMORY_AUTH_TOKEN: optionalText,
+  HYDRA_MEMORY_BASE_URL: optionalUrl,
+  HYDRA_MEMORY_NAMESPACE: optionalText,
+  HYDRA_MEMORY_GRAPH_ID: optionalText,
+  HYDRA_MEMORY_CELL_ID: optionalText,
+  HYDRA_DB_NAMESPACE: z.string().trim().min(1).default("default"),
+  HYDRA_DB_GRAPH_ID: z.string().trim().min(1).default("default"),
+  HYDRA_DB_CELL_ID: z.string().trim().min(1).default("cell-0"),
+  HYDRA_DB_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(30),
+  HYDRA_DB_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  HYDRA_SYNC_INTERVAL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
+    .max(86_400)
+    .default(300),
+  HYDRA_SYNC_PAGE_SIZE: z.coerce.number().int().min(1).max(100).default(50),
+  HYDRA_QUERY_MAX_RESULTS: z.coerce.number().int().min(1).max(20).default(10),
   APP_SCENE_SIZE_LIMIT_BYTES: z.coerce
     .number()
     .int()
@@ -229,6 +261,32 @@ export type AppConfig = {
   allowedOrigins: ReadonlySet<string>;
   sceneSizeLimitBytes: number;
   firebaseProjectId: string;
+  hydra?: {
+    enabled: true;
+    hosted?: {
+      apiKey: string;
+      database: string;
+      baseUrl: string;
+      timeoutSeconds: number;
+      maxRetries: number;
+      queryMaxResults: number;
+    };
+    memory?: {
+      authToken: string;
+      baseUrl: string;
+      namespace: string;
+      graphId: string;
+      cellId: string;
+      timeoutSeconds: number;
+      maxRetries: number;
+      queryMaxResults: number;
+    };
+    timeoutSeconds: number;
+    maxRetries: number;
+    syncIntervalMs: number;
+    syncPageSize: number;
+    queryMaxResults: number;
+  };
   r2: {
     endpointUrl: string;
     bucketName: string;
@@ -300,6 +358,60 @@ export const loadConfig = (
     throw new Error(
       `Invalid environment configuration: ${z.prettifyError(parsed.error)}`,
     );
+  }
+
+  const hostedApiKey =
+    parsed.data.HYDRA_HOSTED_API_KEY || parsed.data.HYDRA_DB_API_KEY;
+  const hostedDatabase =
+    parsed.data.HYDRA_HOSTED_DATABASE || parsed.data.HYDRA_DB_DATABASE;
+  const memoryAuthToken =
+    parsed.data.HYDRA_MEMORY_AUTH_TOKEN ||
+    (parsed.data.HYDRA_DB_PROVIDER === "oss"
+      ? parsed.data.HYDRA_DB_AUTH_TOKEN
+      : undefined);
+  const hasPartialHostedHydra =
+    Boolean(hostedApiKey) !== Boolean(hostedDatabase);
+
+  if (parsed.data.HYDRA_ENABLED) {
+    if (hasPartialHostedHydra) {
+      throw new Error(
+        "Invalid environment configuration: hosted HydraDB requires both HYDRA_HOSTED_API_KEY and HYDRA_HOSTED_DATABASE",
+      );
+    }
+    if (!hostedApiKey && !memoryAuthToken) {
+      throw new Error(
+        "Invalid environment configuration: configure hosted HydraDB credentials and/or the local HydraDB memory token",
+      );
+    }
+    if (hostedApiKey) {
+      const hostedBaseUrl = new URL(
+        parsed.data.HYDRA_HOSTED_BASE_URL ||
+          parsed.data.HYDRA_DB_BASE_URL ||
+          "https://api.hydradb.com",
+      );
+      if (hostedBaseUrl.protocol !== "https:") {
+        throw new Error(
+          "Invalid environment configuration: hosted HydraDB base URL must use HTTPS",
+        );
+      }
+    }
+    if (memoryAuthToken) {
+      const memoryBaseUrl = new URL(
+        parsed.data.HYDRA_MEMORY_BASE_URL ||
+          (parsed.data.HYDRA_DB_PROVIDER === "oss"
+            ? parsed.data.HYDRA_DB_BASE_URL
+            : undefined) ||
+          "http://127.0.0.1:18443",
+      );
+      const memoryIsLoopback = ["127.0.0.1", "::1", "localhost"].includes(
+        memoryBaseUrl.hostname,
+      );
+      if (memoryBaseUrl.protocol !== "https:" && !memoryIsLoopback) {
+        throw new Error(
+          "Invalid environment configuration: local HydraDB memory URL must use HTTPS unless it is loopback",
+        );
+      }
+    }
   }
 
   const currentKanbanKey =
@@ -598,6 +710,69 @@ export const loadConfig = (
     ),
     sceneSizeLimitBytes: parsed.data.APP_SCENE_SIZE_LIMIT_BYTES,
     firebaseProjectId: parsed.data.FIREBASE_PROJECT_ID,
+    ...(parsed.data.HYDRA_ENABLED
+      ? {
+          hydra: {
+            enabled: true as const,
+            ...(hostedApiKey && hostedDatabase
+              ? {
+                  hosted: {
+                    apiKey: hostedApiKey,
+                    database: hostedDatabase,
+                    baseUrl: (
+                      parsed.data.HYDRA_HOSTED_BASE_URL ||
+                      parsed.data.HYDRA_DB_BASE_URL ||
+                      "https://api.hydradb.com"
+                    ).replace(/\/$/, ""),
+                    timeoutSeconds: parsed.data.HYDRA_DB_TIMEOUT_SECONDS,
+                    maxRetries: parsed.data.HYDRA_DB_MAX_RETRIES,
+                    queryMaxResults: parsed.data.HYDRA_QUERY_MAX_RESULTS,
+                  },
+                }
+              : {}),
+            ...(memoryAuthToken
+              ? {
+                  memory: {
+                    authToken: memoryAuthToken,
+                    baseUrl: (
+                      parsed.data.HYDRA_MEMORY_BASE_URL ||
+                      (parsed.data.HYDRA_DB_PROVIDER === "oss"
+                        ? parsed.data.HYDRA_DB_BASE_URL
+                        : undefined) ||
+                      "http://127.0.0.1:18443"
+                    ).replace(/\/$/, ""),
+                    namespace:
+                      parsed.data.HYDRA_MEMORY_NAMESPACE ||
+                      (parsed.data.HYDRA_DB_PROVIDER === "oss"
+                        ? parsed.data.HYDRA_DB_NAMESPACE
+                        : undefined) ||
+                      "local",
+                    graphId:
+                      parsed.data.HYDRA_MEMORY_GRAPH_ID ||
+                      (parsed.data.HYDRA_DB_PROVIDER === "oss"
+                        ? parsed.data.HYDRA_DB_GRAPH_ID
+                        : undefined) ||
+                      "default",
+                    cellId:
+                      parsed.data.HYDRA_MEMORY_CELL_ID ||
+                      (parsed.data.HYDRA_DB_PROVIDER === "oss"
+                        ? parsed.data.HYDRA_DB_CELL_ID
+                        : undefined) ||
+                      "cell-0",
+                    timeoutSeconds: parsed.data.HYDRA_DB_TIMEOUT_SECONDS,
+                    maxRetries: parsed.data.HYDRA_DB_MAX_RETRIES,
+                    queryMaxResults: parsed.data.HYDRA_QUERY_MAX_RESULTS,
+                  },
+                }
+              : {}),
+            timeoutSeconds: parsed.data.HYDRA_DB_TIMEOUT_SECONDS,
+            maxRetries: parsed.data.HYDRA_DB_MAX_RETRIES,
+            syncIntervalMs: parsed.data.HYDRA_SYNC_INTERVAL_SECONDS * 1000,
+            syncPageSize: parsed.data.HYDRA_SYNC_PAGE_SIZE,
+            queryMaxResults: parsed.data.HYDRA_QUERY_MAX_RESULTS,
+          },
+        }
+      : {}),
     r2: {
       endpointUrl: parsed.data.R2_ENDPOINT_URL.replace(/\/$/, ""),
       bucketName: parsed.data.R2_BUCKET_NAME,

@@ -82,6 +82,93 @@ describe("loadConfig", () => {
     expect(() => loadConfig({})).toThrow("Invalid environment configuration");
   });
 
+  it("requires HydraDB credentials when Hydra is enabled", () => {
+    expect(() =>
+      loadConfig({
+        FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+        R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+        R2_BUCKET_NAME: "drawsy",
+        R2_ACCESS_KEY_ID: "key",
+        R2_SECRET_ACCESS_KEY: "secret",
+        WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        HYDRA_ENABLED: "true",
+      }),
+    ).toThrow(
+      "configure hosted HydraDB credentials and/or the local HydraDB memory token",
+    );
+  });
+
+  it("normalizes the current HydraDB v2 configuration", () => {
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      HYDRA_ENABLED: "true",
+      HYDRA_DB_API_KEY: "hydra-key",
+      HYDRA_DB_DATABASE: "drawsy-production",
+      HYDRA_SYNC_INTERVAL_SECONDS: "120",
+      HYDRA_SYNC_PAGE_SIZE: "25",
+      HYDRA_QUERY_MAX_RESULTS: "7",
+    });
+
+    expect(config.hydra).toEqual({
+      enabled: true,
+      hosted: {
+        apiKey: "hydra-key",
+        database: "drawsy-production",
+        baseUrl: "https://api.hydradb.com",
+        timeoutSeconds: 30,
+        maxRetries: 2,
+        queryMaxResults: 7,
+      },
+      timeoutSeconds: 30,
+      maxRetries: 2,
+      syncIntervalMs: 120_000,
+      syncPageSize: 25,
+      queryMaxResults: 7,
+    });
+  });
+
+  it("loads the self-hosted HydraDB OSS graph configuration", () => {
+    const config = loadConfig({
+      FIREBASE_PROJECT_ID: "drawsy-ai-dev",
+      R2_ENDPOINT_URL: "https://account.r2.cloudflarestorage.com",
+      R2_BUCKET_NAME: "drawsy",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      WORKSPACE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      HYDRA_ENABLED: "true",
+      HYDRA_DB_PROVIDER: "oss",
+      HYDRA_DB_AUTH_TOKEN: "local-graph-token",
+      HYDRA_DB_BASE_URL: "http://127.0.0.1:18443",
+      HYDRA_DB_NAMESPACE: "drawsy",
+      HYDRA_DB_GRAPH_ID: "default",
+      HYDRA_DB_CELL_ID: "cell-0",
+    });
+
+    expect(config.hydra).toEqual({
+      enabled: true,
+      memory: {
+        authToken: "local-graph-token",
+        baseUrl: "http://127.0.0.1:18443",
+        namespace: "drawsy",
+        graphId: "default",
+        cellId: "cell-0",
+        timeoutSeconds: 30,
+        maxRetries: 2,
+        queryMaxResults: 10,
+      },
+      timeoutSeconds: 30,
+      maxRetries: 2,
+      syncIntervalMs: 300_000,
+      syncPageSize: 50,
+      queryMaxResults: 10,
+    });
+  });
+
   it("rejects invalid ports", () => {
     expect(() =>
       loadConfig({
