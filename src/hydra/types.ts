@@ -12,7 +12,7 @@ export type HydraKnowledgeRecord = {
   type: string;
   url: string | null;
   timestamp: string | null;
-  kind: "app";
+  kind: HydraAppKind;
   provider: string;
   external_id: string;
   fields: { body: string };
@@ -23,6 +23,11 @@ export type HydraKnowledgeRecord = {
     properties?: Record<string, string | number | boolean | null>;
   };
 };
+
+// Hydra's app-source contract accepts these semantic source families. Use
+// `custom` when a connector object does not fit one of the built-in families.
+export type HydraAppKind =
+  "email" | "message" | "ticket" | "knowledge_base" | "comment" | "custom";
 
 export type HydraMemoryRecord = {
   id: string;
@@ -46,6 +51,7 @@ export type HydraQueryInput = {
 export type HydraQueryResult = {
   context: string;
   chunks: unknown[];
+  sources?: unknown[];
   graphContext: unknown;
   availability?: {
     memory: boolean;
@@ -119,7 +125,9 @@ export type HydraSyncState = {
   totalCapabilities: number;
   recordsSubmitted: number;
   lastSyncAt: number | null;
+  connectionUpdatedAt: number;
   cursorByCapability: Record<string, string | null>;
+  pendingIndexingIds: string[];
   lastError: string | null;
 };
 

@@ -13,6 +13,16 @@ type StoredHydraUserState = HydraUserState & {
   lastError?: string | null;
 };
 
+const USER_SEEN_WRITE_INTERVAL_MS = 60_000;
+
+const isAlreadyExistsError = (error: unknown) => {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  return code === 6 || code === "6" || code === "ALREADY_EXISTS";
+};
+
 export class FirestoreHydraStateStore implements HydraStateStore {
   private readonly firestore;
 
@@ -22,35 +32,41 @@ export class FirestoreHydraStateStore implements HydraStateStore {
 
   async ensureUser(userId: string, now: number) {
     const reference = this.user(userId);
-    await this.firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(reference);
-      if (!snapshot.exists) {
-        transaction.set(reference, {
-          enabled: true,
-          lastSeenAt: now,
-          nextSyncAt: now,
-          syncInProgress: false,
-          syncLeaseUntil: null,
-          lastSyncAt: null,
-          lastError: null,
-        });
-        return;
-      }
-      const current = this.readStoredUser(snapshot.data());
-      transaction.set(
-        reference,
-        {
-          enabled: true,
-          lastSeenAt: now,
-          ...(current.nextSyncAt === null && !current.syncInProgress
-            ? { nextSyncAt: now }
-            : {}),
-        },
-        { merge: true },
-      );
-    });
     const snapshot = await reference.get();
-    return this.readUser(snapshot.data());
+    if (!snapshot.exists) {
+      const initial = {
+        enabled: true,
+        lastSeenAt: now,
+        nextSyncAt: now,
+        syncInProgress: false,
+        syncLeaseUntil: null,
+        lastSyncAt: null,
+        lastError: null,
+      };
+      try {
+        await reference.create(initial);
+        return this.readUser(initial);
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) throw error;
+        const retry = await reference.get();
+        return this.readUser(retry.data());
+      }
+    }
+
+    const current = this.readStoredUser(snapshot.data());
+    const updates: Record<string, unknown> = {
+      ...(current.enabled ? {} : { enabled: true }),
+      ...(now - current.lastSeenAt >= USER_SEEN_WRITE_INTERVAL_MS
+        ? { lastSeenAt: now }
+        : {}),
+      ...(current.nextSyncAt === null && !current.syncInProgress
+        ? { nextSyncAt: now }
+        : {}),
+    };
+    if (Object.keys(updates).length) {
+      await reference.set(updates, { merge: true });
+    }
+    return this.readUser({ ...current, ...updates });
   }
 
   async getUser(userId: string) {
@@ -197,6 +213,10 @@ export class FirestoreHydraStateStore implements HydraStateStore {
           : 0,
       lastSyncAt:
         typeof record.lastSyncAt === "number" ? record.lastSyncAt : null,
+      connectionUpdatedAt:
+        typeof record.connectionUpdatedAt === "number"
+          ? record.connectionUpdatedAt
+          : 0,
       cursorByCapability: cursorRecord
         ? Object.fromEntries(
             Object.entries(cursorRecord).map(([key, cursor]) => [
@@ -205,6 +225,12 @@ export class FirestoreHydraStateStore implements HydraStateStore {
             ]),
           )
         : {},
+      pendingIndexingIds: Array.isArray(record.pendingIndexingIds)
+        ? record.pendingIndexingIds.filter(
+            (id: unknown): id is string =>
+              typeof id === "string" && id.length > 0,
+          )
+        : [],
       lastError: typeof record.lastError === "string" ? record.lastError : null,
     } satisfies HydraSyncState;
   }
