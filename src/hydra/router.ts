@@ -81,7 +81,14 @@ export const createHydraRouter = (
   router.use("/hydra", authenticate);
 
   router.get("/hydra/status", async (_request, response) => {
-    response.setHeader("Cache-Control", "no-store");
+    // This is authenticated, user-scoped status. A short private cache keeps
+    // the UI from re-reading Firestore on every progress poll while allowing
+    // connector state to become visible promptly.
+    response.setHeader(
+      "Cache-Control",
+      "private, max-age=5, stale-while-revalidate=25",
+    );
+    response.setHeader("Vary", "Authorization");
     response.json(await service.status(userId(response)));
   });
 
