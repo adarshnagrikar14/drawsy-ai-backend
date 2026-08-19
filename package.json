@@ -27,6 +27,7 @@
     "@aws-sdk/client-s3": "3.1078.0",
     "@aws-sdk/client-sts": "^3.1078.0",
     "@aws-sdk/s3-request-presigner": "^3.1078.0",
+    "@hydradb/sdk": "^2.1.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "2.8.5",
     "dotenv": "17.2.3",
