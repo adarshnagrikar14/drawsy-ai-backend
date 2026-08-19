@@ -16,6 +16,17 @@ const REMOTE_MCP_SERVERS: Record<RemoteMcpProviderId, string> = {
   fireflies: "https://api.fireflies.ai/mcp",
 };
 
+const safeRemoteError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(
+      /([?&](?:access_token|refresh_token|token)=)[^&\s]+/gi,
+      "$1[redacted]",
+    )
+    .slice(0, 240);
+};
+
 const isReadOnlyTool = (
   providerId: RemoteMcpProviderId,
   tool: { name: string; annotations?: { readOnlyHint?: boolean } },
@@ -115,10 +126,22 @@ export class RemoteMcpClient {
       if (error instanceof ApiError) {
         throw error;
       }
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "connector_mcp_request_failed",
+          providerId,
+          error:
+            error instanceof Error
+              ? { name: error.name, message: safeRemoteError(error) }
+              : safeRemoteError(error),
+        }),
+      );
+      const detail = safeRemoteError(error);
       throw new ApiError(
         502,
         "connector_mcp_unavailable",
-        `${providerId === "read-ai" ? "Read AI" : "Fireflies"} could not be reached.`,
+        `${providerId === "read-ai" ? "Read AI" : "Fireflies"} could not be reached${detail ? ` (${detail})` : "."}`,
       );
     } finally {
       await client.close().catch(() => undefined);
