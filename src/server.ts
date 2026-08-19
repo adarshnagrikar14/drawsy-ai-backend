@@ -24,6 +24,10 @@ import {
 } from "./connectors/remoteMcpProvider.js";
 import { DefaultAiResourceService } from "./aiResources/service.js";
 import { AwsProvider } from "./connectors/awsProvider.js";
+import { HydraDbClient } from "./hydra/client.js";
+import { HydraOssClient } from "./hydra/ossClient.js";
+import { FirestoreHydraStateStore } from "./hydra/firestoreHydraStateStore.js";
+import { createConnectorSyncExecutor, HydraService } from "./hydra/service.js";
 
 const config = loadConfig();
 const firebaseApp = getFirebaseAdminApp(config.firebaseProjectId);
@@ -107,6 +111,31 @@ const jiraService = config.jira
       new FirestoreJiraConnectionStore(firebaseApp),
     )
   : undefined;
+const connectorService = config.connectors
+  ? new DefaultConnectorService(
+      config.connectors,
+      connectorProviders,
+      new FirestoreConnectorConnectionStore(firebaseApp),
+    )
+  : undefined;
+const hydraService = config.hydra
+  ? new HydraService(
+      config.hydra,
+      config.hydra.hosted ? new HydraDbClient(config.hydra.hosted) : null,
+      config.hydra.memory ? new HydraOssClient(config.hydra.memory) : null,
+      new FirestoreHydraStateStore(firebaseApp),
+      connectorService && config.connectors
+        ? {
+            connectorService,
+            executeConnector: createConnectorSyncExecutor(
+              connectorService,
+              config.connectors.httpTimeoutMs,
+              config.connectors.aiMaxOutputBytes,
+            ),
+          }
+        : undefined,
+    )
+  : undefined;
 const app = createApp({
   config,
   tokenVerifier: createFirebaseTokenVerifier(firebaseApp),
@@ -118,13 +147,8 @@ const app = createApp({
   commentService: new FirestoreCommentService(firebaseApp),
   kanbanService,
   jiraService,
-  connectorService: config.connectors
-    ? new DefaultConnectorService(
-        config.connectors,
-        connectorProviders,
-        new FirestoreConnectorConnectionStore(firebaseApp),
-      )
-    : undefined,
+  connectorService,
+  hydraService,
   aiResourceService: new DefaultAiResourceService(
     config.r2.encryptionKey,
     config.connectors?.aiGrantTtlMs ?? 10 * 60 * 1000,
@@ -133,6 +157,8 @@ const app = createApp({
     jiraService,
   ),
 });
+
+hydraService?.start();
 
 const server = app.listen(config.port, config.host, () => {
   console.log(
@@ -151,6 +177,7 @@ const shutdown = (signal: NodeJS.Signals) => {
   console.log(
     JSON.stringify({ level: "info", message: "server_stopping", signal }),
   );
+  hydraService?.stop();
   server.close((error) => {
     if (error) {
       console.error(

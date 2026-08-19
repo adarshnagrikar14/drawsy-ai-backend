@@ -14,6 +14,7 @@ import { createPresentationsRouter } from "./presentations/router.js";
 import { createJiraRouter } from "./jira/router.js";
 import { createConnectorsRouter } from "./connectors/router.js";
 import { createAiResourcesRouter } from "./aiResources/router.js";
+import { createHydraRouter } from "./hydra/router.js";
 
 import type { AppConfig } from "./config.js";
 import type { TokenVerifier } from "./auth/types.js";
@@ -24,6 +25,7 @@ import type { PresentationService } from "./presentations/types.js";
 import type { JiraService } from "./jira/types.js";
 import type { ConnectorService } from "./connectors/types.js";
 import type { AiResourceService } from "./aiResources/types.js";
+import type { HydraService } from "./hydra/service.js";
 import type { NextFunction, Request, Response } from "express";
 
 type AppDependencies = {
@@ -36,6 +38,7 @@ type AppDependencies = {
   jiraService?: JiraService;
   connectorService?: ConnectorService;
   aiResourceService?: AiResourceService;
+  hydraService?: HydraService;
 };
 
 export const createApp = ({
@@ -48,6 +51,7 @@ export const createApp = ({
   jiraService,
   connectorService,
   aiResourceService,
+  hydraService,
 }: AppDependencies) => {
   const app = express();
   const authenticate = createAuthenticate(tokenVerifier);
@@ -104,6 +108,10 @@ export const createApp = ({
 
   if (aiResourceService) {
     app.use("/v1", createAiResourcesRouter(authenticate, aiResourceService));
+  }
+
+  if (hydraService) {
+    app.use("/v1", createHydraRouter(authenticate, hydraService));
   }
 
   if (kanbanService) {
