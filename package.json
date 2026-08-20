@@ -16,6 +16,10 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "start": "node dist/server.js",
+    "eval:hydra-memory": "tsx scripts/hydra-memory-eval.ts",
+    "eval:hydra-official": "tsx scripts/hydra-official-eval.ts",
+    "eval:hydra-beam-export": "python3 scripts/hydra-beam-export.py",
+    "eval:hydra-connectors": "tsx scripts/hydra-connector-eval.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
