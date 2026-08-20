@@ -145,6 +145,28 @@ according to its current [AGENTS guide](https://docs.hydradb.com/AGENTS) and
 [v2 introduction](https://docs.hydradb.com/get-started/v2/introduction). Keep
 the local graph endpoint on loopback. The backend’s local defaults are:
 
+### Drawsy HydraDB fork
+
+The local graph-node used for this build comes from the [Drawsy HydraDB fork](https://github.com/adarshnagrikar14/hydradb).
+The fork is based on upstream `6a2fbb1` and its published history currently
+contains eight Drawsy-authored commits through `5f6ca14`. The relevant changes
+are real runtime changes, not README-only attribution:
+
+- `ConditionalLocalFileSystem` implements checked local SlateDB updates and
+  serializes the local manifest/checkpoint replacement path;
+- the shard write pipeline skips oversized property-index keys while retaining
+  the full long value in vertex/edge metadata, which matters for conversation
+  records; and
+- graph-node startup/readiness, HTTP telemetry, cluster/placement, and test
+  updates keep the local OSS node observable and runnable.
+
+The [fork diff](https://github.com/adarshnagrikar14/hydradb/compare/6a2fbb192f37f51a93690a2ae2d2f5e27e6e4219...5f6ca146e2789234e231f228ca180689f991d1af)
+and [local object-store commit](https://github.com/adarshnagrikar14/hydradb/commit/e594d8b37d7611ba1ed08c3a96db4030a46e49ca)
+are the source evidence. Cloud object stores still use HydraDB’s upstream
+path; this adapter is deliberately limited to local single-node development.
+The fork retains HydraDB’s AGPL-3.0 license and is deployed as a separate OSS
+graph service, not rebranded as Drawsy backend code.
+
 ```dotenv
 HYDRA_ENABLED=true
 HYDRA_MEMORY_BASE_URL=http://127.0.0.1:18443
