@@ -6,11 +6,18 @@ private memory boundary. The browser never receives Hydra or provider
 credentials.
 
 <p align="center">
-  <a href="https://github.com/adarshnagrikar14/drawsy-ai/tree/feat-hyda-hack">Frontend branch</a>
+  <a href="https://alpha.drawsyai.tech">Hydra alpha test</a>
+  · <a href="https://github.com/adarshnagrikar14/drawsy-ai/tree/feat-hyda-hack">Frontend branch</a>
   · <a href="https://github.com/adarshnagrikar14/drawsy-ai-mcp/tree/feat-hyda-hack">MCP branch</a>
+  · <a href="https://github.com/adarshnagrikar14/hydradb/tree/hydra-drawsy-alpha-build">Drawsy HydraDB fork branch</a>
   · <a href="https://github.com/hydra-db/hydradb">HydraDB OSS</a>
   · <a href="https://docs.hydradb.com/get-started/v2/introduction">HydraDB v2 docs</a>
 </p>
+
+The deployed Track 03 test surface is [alpha.drawsyai.tech](https://alpha.drawsyai.tech).
+The alpha backend runs beside production and is reached through the alpha
+gateway; its private HydraDB OSS graph-node and server credentials are not
+public browser endpoints.
 
 ## Service role
 
