@@ -54,8 +54,16 @@ export class FirestoreHydraStateStore implements HydraStateStore {
     }
 
     const current = this.readStoredUser(snapshot.data());
+    const staleSyncLease =
+      current.syncInProgress && (current.syncLeaseUntil || 0) <= now;
     const updates: Record<string, unknown> = {
       ...(current.enabled ? {} : { enabled: true }),
+      // A process can die after acquiring the lease and before finishSync.
+      // Clear that durable marker on the next authenticated read so a
+      // restart cannot leave this user's sync permanently stuck.
+      ...(staleSyncLease
+        ? { syncInProgress: false, syncLeaseUntil: null, nextSyncAt: now }
+        : {}),
       ...(now - current.lastSeenAt >= USER_SEEN_WRITE_INTERVAL_MS
         ? { lastSeenAt: now }
         : {}),

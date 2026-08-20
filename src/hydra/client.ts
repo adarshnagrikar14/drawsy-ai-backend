@@ -101,6 +101,8 @@ export class HydraDbClient implements HydraKnowledgeClient {
         pending.delete(status.id);
       } else if (
         status.indexingStatus === "failed" ||
+        // `failed` is the v2 SDK/API state. Keep `errored` for older hosted
+        // responses so a terminal failure can never remain queued forever.
         status.indexingStatus === "errored"
       ) {
         const failure = [status.errorCode, status.errorMessage]
@@ -134,8 +136,12 @@ export class HydraDbClient implements HydraKnowledgeClient {
       recencyBias: 0.2,
     });
     const data = responseData(response);
+    const context = buildString(response);
     return {
-      context: buildString(response),
+      // The official helper returns a human-readable placeholder when the
+      // hosted corpus has no matching chunks. Do not inject that placeholder
+      // into the model prompt as if Hydra supplied source material.
+      context: context === "No relevant context found." ? "" : context,
       chunks: data.chunks || [],
       sources: data.sources || [],
       graphContext: data.graphContext || null,
