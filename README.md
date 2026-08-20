@@ -1,229 +1,172 @@
-# Drawsy AI Backend
+# Drawsy AI Backend — Hydra Hack
 
-Authenticated workspace, resource, and connector control plane for Drawsy AI. It coordinates Firebase identity, Firestore metadata, encrypted Cloudflare R2 scenes, Kanban/Jira resources, provider OAuth, and read-only connected-source execution without replacing the Excalidraw editor core.
+`feat-hyda-hack` is the authenticated service behind Drawsy’s Track 03 build.
+It owns identity, connector authorization and sync, Hydra retrieval, and the
+private memory boundary. The browser never receives Hydra or provider
+credentials.
 
-> **Repository status:** private for now. It is shared directly with OpenAI Build Week judges and may be published after a dedicated security and release review. No license is granted by repository access alone.
+<p align="center">
+  <a href="https://github.com/adarshnagrikar14/drawsy-ai/tree/feat-hyda-hack">Frontend branch</a>
+  · <a href="https://github.com/adarshnagrikar14/drawsy-ai-mcp/tree/feat-hyda-hack">MCP branch</a>
+  · <a href="https://github.com/hydra-db/hydradb">HydraDB OSS</a>
+  · <a href="https://docs.hydradb.com/get-started/v2/introduction">HydraDB v2 docs</a>
+</p>
 
-## Product role
+## Service role
 
 ```mermaid
 flowchart LR
-  Client["Drawsy web client"] -->|"Firebase ID token"| API["Drawsy backend"]
-  API --> Firestore["Firestore metadata"]
-  API --> R2["Encrypted R2 scenes"]
-  API --> Resources["Kanban · Jira"]
-  API --> Providers["Connected providers"]
-  Agent["Drawsy MCP"] -->|"Short-lived turn grant"| API
+  Client["Drawsy frontend"] -->|Firebase ID token| API["Backend API"]
+  Bridge["Drawsy MCP bridge"] -->|short-lived authenticated turn| API
+  API --> Firestore["Firestore identity + sync state"]
+  API --> R2["Encrypted scene storage"]
+  API -->|connector ingest/query| Hosted["Hosted HydraDB"]
+  API -->|private memory graph| OSS["HydraDB OSS graph-node"]
+  API -->|only for explicit/fresh/action needs| Providers["Live provider tools"]
 ```
 
-The browser proves user identity with Firebase. This service then enforces ownership, membership, version, capability, and provider boundaries. Provider credentials remain server-side; the Drawsy MCP receives only narrowly scoped, expiring grants. This service does not run Codex or OpenCode, persist their session-only provider keys, or receive a selected coding workspace; those responsibilities remain in `drawsy-ai-mcp`.
+The backend remains the browser-facing control plane. It verifies Firebase
+identity, resolves the user from the token rather than from request input, and
+keeps connector access behind short-lived, capability-scoped grants.
 
-## OpenAI Build Week 2026
+## Hydra design
 
-- **Submission window opened:** July 13, 2026 at 9:00 AM PT.
-- **First qualifying commit:** [`99e4e8a`](https://github.com/adarshnagrikar14/drawsy-ai-backend/commit/99e4e8ad1fef7d261073c0d15f8602da456eedaa)
+Hydra is an automatic signed-in context layer, not another OAuth connector and
+not a user-facing route the person has to remember.
 
-Qualifying work includes turn-scoped connector and first-party resource grants, normalized provider execution, granular Google/GitHub/Notion/Slack tools, GitHub App installations, official Read AI and Fireflies remote MCP clients, read-only AWS cross-account inventory, Kanban ordering fixes, deployment packaging, and focused integration tests.
+| Path | Data | Hydra integration | Failure behavior |
+| --- | --- | --- | --- |
+| Personal memory | Completed signed-in turns and canvas/chat references | Official HydraDB OSS graph-node over its documented graph HTTP API | Memory can be unavailable without blocking ordinary chat |
+| Connector knowledge | Normalized, syncable records from connected sources | Hosted HydraDB through `@hydradb/sdk` v2 | A source stays syncing/errored until its records are actually indexed |
+| Live connector | Fresh provider reads or actions | Existing provider/remote MCP adapter with a turn grant | Used only when naturally needed or explicitly requested |
 
-Precision diagram delivery is implemented by the Drawsy client and MCP bridge. This API continues to provide the authorized, versioned canvas data they operate on; it does not interpret diagram meaning or impose layout rules.
+The two Hydra stores are queried in parallel. The model receives returned source
+material as data, never as instructions. A missing or degraded connector does
+not make private memory unavailable.
 
-Codex running GPT-5.6 accelerated the service design, provider research, TypeScript implementation, test coverage, and deployment debugging. The product owner chose the authorization model: sources are explicit per turn, credentials never enter the model runtime, Jira remains read-only, Kanban mutations reuse normal board permissions, and AWS access is inventory-only.
+### Hydra routes
 
-The main product record and complete repository set are documented in [`excal-ai`](https://github.com/adarshnagrikar14/excal-ai) under its **#Build Week Special** section.
+These are internal authenticated service contracts used by the Drawsy MCP
+bridge. They do not compel a user action or require an `@Hydra` tag.
 
-## Current API
+- `GET /v1/hydra/status` — signed-in availability, memory state, connector
+  readiness, per-source progress, and last error.
+- `POST /v1/hydra/query` — user-scoped memory and indexed connector retrieval.
+- `POST /v1/hydra/turns` — idempotent write of a completed signed-in turn and
+  canvas/source references.
+- `DELETE /v1/hydra/memory` — delete selected personal memory records.
 
-- `GET /health` - public service health
-- `GET /v1/me` - verifies a Firebase ID token and returns its normalized user
-- `GET /v1/workspace` - lists the user's project and canvas metadata
-- `GET /v1/canvases/:id/scene` - loads an authorized canvas scene
-- `PUT /v1/projects/:id` - creates or updates a versioned project
-- `DELETE /v1/projects/:id?baseVersion=N` - deletes a project and its canvases
-- `PUT /v1/canvases/:id` - creates or updates a versioned canvas and R2 scene
-- `PATCH /v1/canvases/:id` - updates canvas metadata without rewriting its scene
-- `DELETE /v1/canvases/:id?baseVersion=N` - deletes a canvas
-- `GET /v1/canvases/:id/comments` - lists the owner's private comments
-- `POST /v1/canvases/:id/comments` - creates a private comment
-- `DELETE /v1/canvases/:id/comments/:commentId?baseVersion=N` - deletes a comment
-
-### Kanban
-
-- `GET /v1/kanban/boards` - lists authorized boards
-- `POST /v1/kanban/boards` - creates an encrypted board
-- `GET /v1/kanban/boards/:id/snapshot` - loads the canonical board
-- `GET /v1/kanban/boards/:id/changes?afterRevision=N` - loads bounded deltas
-- `GET /v1/kanban/boards/:id/events` - authenticated SSE revision/role stream
-- `POST /v1/kanban/boards/:id/commands` - applies ordered idempotent commands
-- `GET /v1/kanban/boards/:id/members` - lists members
-- `PATCH /v1/kanban/boards/:id/members/:userId` - changes editor/viewer role
-- `DELETE /v1/kanban/boards/:id/members/:userId` - removes access or leaves
-- `POST /v1/kanban/boards/:id/ownership-transfer` - transfers ownership after recent authentication
-- `POST /v1/kanban/boards/:id/invitations` - creates a single-use email-bound invite link
-- `DELETE /v1/kanban/boards/:id/invitations/:invitationId` - revokes an invitation
-- `POST /v1/kanban/invitations/inspect` - inspects a token without exposing board data
-- `POST /v1/kanban/invitations/accept` - accepts with the verified invited email
-
-### Connectors
-
-- `GET /v1/connectors` - lists configured providers and the user's connections
-- `POST /v1/connectors/:providerId/oauth/start` - starts provider OAuth
-- `POST /v1/connectors/:providerId/setup/start` - starts a guided non-OAuth provider setup such as AWS
-- `POST /v1/connectors/:providerId/setup/verify` - verifies the provider setup without a popup callback
-- `GET /v1/connectors/oauth/attempts/:attemptId` - reports OAuth completion
-- `GET /v1/connectors/:providerId/oauth/callback` - public OAuth callback
-- `DELETE /v1/connectors/connections/:connectionId` - revokes and removes access
-- `POST /v1/connectors/ai/grants` - mints a short-lived, user-authenticated connector grant for one local AI turn
-- `POST /v1/connectors/ai/execute` - executes grant-scoped, read-only provider operations; Read AI and Fireflies proxy their official remote MCP tools
-
-### Personal context (HydraDB)
-
-- `GET /v1/hydra/status` - reports whether the signed-in user's personal memory is available and which sources are syncing
-- `POST /v1/hydra/query` - retrieves that user's relevant memory and connector context
-- `POST /v1/hydra/turns` - stores a completed signed-in chat turn as memory
-- `DELETE /v1/hydra/memory` - removes selected personal memories
-
-Hydra is an automatic signed-in context layer, not an OAuth connector. Hosted
-HydraDB stores syncable connector knowledge in the authenticated user's
-collection through the v2 SDK. The local memory path uses the official
-[HydraDB OSS repository](https://github.com/hydra-db/hydradb) as a separate
-graph-node and calls its documented OpenCypher HTTP API; the backend stores
-completed chat turns, ownership, and source relationships there. The two stores
-are queried in parallel and either one can fail without blocking the other.
-The OSS checkout used for local validation is
-`/Users/adarsh/Desktop/excal-ai/hydradb` with the fork
-`https://github.com/adarshnagrikar14/hydradb`.
-
-The connector control plane owns OAuth, encrypted credentials, account-scoped
-permissions, refresh, and revocation for Google Workspace, Notion, Slack,
-GitHub, Read AI, and Fireflies. One Google Workspace account supplies Mail, Calendar, and Drive with
-granted read-only scopes. Provider adapters keep product APIs and future MCP
-consumers behind the same authorization boundary. Read AI and Fireflies use
-their first-party Streamable HTTP MCP servers with OAuth and live tool
-discovery; Drawsy filters their tool catalogs to read-only operations before
-they reach the model. Drawsy's local MCP service
-uses short-lived signed grants and never receives provider access or refresh
-tokens.
-
-The grant endpoint requires the normal Firebase bearer token and accepts:
-
-```json
-{
-  "sessionId": "local-session-id",
-  "turnId": "turn-id",
-  "connectionId": "owned-connection-id",
-  "capabilities": ["mail", "drive"]
-}
-```
-
-The returned grant is valid only for that authenticated user, local session,
-turn, connection, and capability allowlist. The MCP process supplies it as the
-Bearer token to `/v1/connectors/ai/execute`, repeating the exact session, turn,
-connection, and one allowed capability in the body. Execution accepts either a
-bounded keyword `search`, typed provider `list`, or opaque-resource `read`
-request using an opaque `resourceId` returned by search or list. Results share one
-normalized item envelope across Mail, Calendar, Drive, Notion, Slack, and
-GitHub. Grants expire by default after ten minutes and are dropped by the local
-bridge when the turn ends; provider calls use fixed
-HTTPS hosts, timeouts, strict response validation, and an output byte ceiling.
-
-Provider applications must be registered before their cards become available:
-
-- Google Workspace: web OAuth client, enabled Gmail/Calendar/Drive APIs, consent
-  screen, and Google verification for the requested restricted scopes.
-- Notion: public connection with the backend callback URI.
-- Slack: distributed or approved internal app with the documented user scopes.
-- GitHub: GitHub App with read-only Metadata, Contents, Issues, and Pull
-  requests permissions. Set its Setup URL to
-  `/v1/connectors/github/install/callback`; users choose repository access in
-  GitHub's installation screen.
-- Read AI: dynamically registered public OAuth client for
-  `https://api.read.ai/mcp`, using the backend
-  `/v1/connectors/read-ai/oauth/callback` URI and PKCE.
-- Fireflies: dynamically registered public OAuth client for
-  `https://api.fireflies.ai/mcp`, using the backend
-  `/v1/connectors/fireflies/oauth/callback` URI and PKCE.
-- AWS: upload `infra/aws-connector-read-role.yaml` to private Amazon S3 (or
-  configure a supported S3 URL). Drawsy creates an object-specific signed URL
-  for CloudFormation. The backend runtime uses its normal AWS credential chain
-  as `AWS_CONNECTOR_PRINCIPAL_ARN`, assumes the customer role with a unique
-  external ID, and stores only the encrypted role descriptor. The connection
-  exposes enabled regions, Resource Explorer inventory, and CloudFormation
-  stacks/templates. It does not read application data or expose AWS writes.
-
-Use HTTPS callback/success URLs and a deployment secret manager in production.
-
-### Drawsy AI resources
-
-- `POST /v1/ai/resources/grants` - mints a short-lived, user-authenticated grant for tagged first-party resources
-- `POST /v1/ai/resources/execute` - executes grant-scoped Kanban or Jira tools for the exact local AI session and turn
-
-`@kanban` exposes board reads plus semantic card, checklist, move, and
-current-canvas-link operations. Every mutation still passes through the normal
-Kanban membership, lock, encryption, revision, idempotency, and audit path.
-`@jira` exposes permission-filtered connections, projects, issues, boards,
-sprints, and backlog reads through Atlassian's existing OAuth service; it does
-not expose Jira writes. Resource grants are signed in a separate cryptographic
-domain, contain no Firebase or provider credentials, expire after the configured
-AI grant lifetime, and are discarded by the local bridge when the turn ends.
-Configure Firestore TTL on `deleteAt` for the `connectorOAuthStates` and
-`connectorOAuthAttempts` collection groups.
-
-Protected requests use:
+Every protected request uses:
 
 ```http
 Authorization: Bearer <firebase-id-token>
 ```
 
-The backend verifies client ID tokens with Firebase Admin. It never accepts a
-user ID supplied by the client as proof of identity.
+The backend derives the owner from the verified token. Anonymous requests do
+not receive personal memory or connector knowledge.
 
-Project and canvas metadata is stored below the authenticated user's Firestore
-path. Full scenes are stored under user-scoped R2 object keys in authenticated
-compressed AES-256-GCM envelopes. Canonical scene hashes make retrying an
-identical checkpoint idempotent. Updates use a required `baseVersion`; stale
-writes return `409 version_conflict` instead of overwriting another device.
+## Personal memory graph
 
-Comments live below the authenticated user's canvas in Firestore. They are not
-stored in scene JSON, R2 scene objects, shared links, collaboration payloads, or
-exports. Removing a canvas also removes its comments.
+The OSS path stores graph relationships instead of a flat prompt dump:
 
-Kanban is local-first in the frontend. Firestore stores normalized board state,
-idempotent operation results, and encrypted delta events. Board/card/checklist
-content and invitation email are protected with per-board AES-256-GCM data keys;
-only wrapped data keys are stored. Realtime uses the authenticated SSE endpoint
-and multiplexed canonical Firestore listeners. It does not poll and does not add
-Kanban traffic to the Excalidraw collaboration server.
+```mermaid
+graph TD
+  User["DrawsyUser"] --> Collection["Owner-scoped collection"]
+  Context["DrawsyContext · memory_turn"] --> User
+  Context --> Session["DrawsySession"]
+  Context --> Conversation["DrawsyConversation"]
+  Context --> Source["DrawsySource"]
+  Source --> Canvas["Canvas or chat reference"]
+```
 
-Back up `WORKSPACE_ENCRYPTION_KEY` in the deployment secret manager. Losing it
-makes existing workspace scenes unrecoverable.
+Memory writes use deterministic IDs and `MERGE`-style upserts. Retrying the same
+event key updates the same graph record. Retrieval is global within the
+authenticated user boundary, so a later canvas can use an earlier canvas’s
+decision without leaking it across users or forcing a canvas filter.
+
+## Connector knowledge sync
+
+The connector pipeline is deliberately stateful and readiness-gated:
+
+1. The user connects a provider through the existing OAuth or guided setup
+   flow.
+2. The backend enumerates the provider’s syncable capabilities.
+3. Each capability is normalized into bounded knowledge records with provider,
+   account, capability, source, and owner metadata.
+4. Records are upserted into the user’s hosted HydraDB collection using stable
+   identities; retries do not multiply records.
+5. The backend reports progress per connector and capability in Firestore.
+6. Only a source with completed records and successful indexing is returned as
+   ready Hydra connector context.
+
+Current adapters include Google Workspace (Mail, Calendar, Drive), Notion,
+GitHub, Read AI, Fireflies, AWS inventory, and Slack where configured. A
+provider that is unsupported, rate-limited, missing a resource, or still
+indexing stays visible as an operational state; it is not silently counted as
+usable knowledge.
+
+Live provider reads remain separate. A live result is returned as a live
+provider result, not retroactively labelled as a Hydra source.
+
+## Connector authorization
+
+- OAuth credentials and refresh tokens remain server-side and encrypted.
+- The MCP bridge receives a short-lived grant bound to the authenticated user,
+  session, turn, connection, and capability allowlist.
+- Provider responses are validated, bounded, and normalized before reaching the
+  model.
+- Read AI and Fireflies use their official remote Streamable HTTP MCP servers
+  with OAuth and read-only tool filtering.
+- GitHub uses a read-only GitHub App installation.
+- AWS is inventory-only through the guided cross-account role; it does not
+  expose application data or AWS writes.
+
+Provider registration and callback settings are in the env example file. Use
+HTTPS callback URLs and a deployment secret manager outside local development.
 
 ## Local setup
 
 Requirements:
 
 - Node.js 22 or newer
-- Access to the owned Firebase project
-- Google Application Default Credentials
+- owned Firebase project access and Google Application Default Credentials
+- a local HydraDB OSS graph-node following the current upstream instructions
 
 ```bash
+git clone --branch feat-hyda-hack https://github.com/adarshnagrikar14/drawsy-ai-backend.git
+cd drawsy-ai-backend
 cp .env.example .env
 npm install
 npm run dev
 ```
 
-For local credentials, set `GOOGLE_APPLICATION_CREDENTIALS` to an absolute path
-to a service-account JSON file. Do not commit that file. On Google Cloud,
-Application Default Credentials use the service account attached to the
-runtime, so no credential file is required.
+Start the official [HydraDB OSS repository](https://github.com/hydra-db/hydradb)
+according to its current [AGENTS guide](https://docs.hydradb.com/AGENTS) and
+[v2 introduction](https://docs.hydradb.com/get-started/v2/introduction). Keep
+the local graph endpoint on loopback. The backend’s local defaults are:
 
-For the full local hybrid path, run HydraDB's documented native/runtime smoke
-checks first, keep its HTTP endpoint on `127.0.0.1:18443`, then set
-`HYDRA_ENABLED=true` with `HYDRA_HOSTED_API_KEY`/`HYDRA_HOSTED_DATABASE` for
-connector knowledge and `HYDRA_MEMORY_AUTH_TOKEN` plus the local graph scope for
-private memory. The older `HYDRA_DB_*` names remain accepted as migration
-aliases. Without `HYDRA_ENABLED=true`, the Hydra router is intentionally absent
-and authenticated status requests return `404`. The Drawsy backend remains the
-only browser-facing service.
+```dotenv
+HYDRA_ENABLED=true
+HYDRA_MEMORY_BASE_URL=http://127.0.0.1:18443
+HYDRA_MEMORY_NAMESPACE=local
+HYDRA_MEMORY_GRAPH_ID=default
+HYDRA_MEMORY_CELL_ID=cell-0
+```
+
+Set the server-only values for hosted connector knowledge and local memory in
+the env file; never commit them:
+
+```dotenv
+HYDRA_HOSTED_API_KEY=
+HYDRA_HOSTED_DATABASE=
+HYDRA_HOSTED_BASE_URL=https://api.hydradb.com
+HYDRA_MEMORY_AUTH_TOKEN=
+```
+
+`HYDRA_ENABLED` gates the Hydra router and sync worker. The older `HYDRA_DB_*`
+names are accepted only as migration aliases. `APP_ALLOWED_ORIGINS` must list
+the exact frontend origins used for local or hosted deployment; do not use a
+wildcard when credentials are enabled.
 
 ## Commands
 
@@ -236,60 +179,82 @@ npm run build
 npm start
 ```
 
-## Configuration
+The complete environment reference is [the env example](./.env.example). It
+includes Firebase, R2, connector OAuth, grant, CORS, sync, retry, timeout, and
+encryption settings. No service-account file, provider secret, R2 credential,
+or Hydra key belongs in this repository.
 
-- `NODE_ENV`: `development`, `test`, or `production`
-- `APP_HOST`: bind host
-- `APP_PORT`: bind port
-- `APP_ALLOWED_ORIGINS`: comma-separated exact browser origins
-- `FIREBASE_PROJECT_ID`: Firebase project used to verify token audience
-- `APP_SCENE_SIZE_LIMIT_BYTES`: maximum accepted serialized canvas size
-- `HYDRA_ENABLED`: enables authenticated personal context and connector sync
-- `HYDRA_HOSTED_API_KEY`, `HYDRA_HOSTED_DATABASE`, `HYDRA_HOSTED_BASE_URL`: server-only hosted HydraDB connector-knowledge settings
-- `HYDRA_MEMORY_AUTH_TOKEN`, `HYDRA_MEMORY_BASE_URL`, `HYDRA_MEMORY_NAMESPACE`, `HYDRA_MEMORY_GRAPH_ID`, `HYDRA_MEMORY_CELL_ID`: server-only local OSS memory settings
-- `HYDRA_DB_TIMEOUT_SECONDS`, `HYDRA_DB_MAX_RETRIES`: Hydra request controls
-- `HYDRA_SYNC_INTERVAL_SECONDS`, `HYDRA_SYNC_PAGE_SIZE`, `HYDRA_QUERY_MAX_RESULTS`: connector sync and personal-context limits
-- `R2_ENDPOINT_URL`: S3-compatible Cloudflare R2 endpoint
-- `R2_BUCKET_NAME`: owned R2 bucket
-- `R2_REGION`: normally `auto` for R2
-- `R2_KEY_PREFIX`: isolated workspace object prefix
-- `R2_ACCESS_KEY_ID`: server-only R2 access key
-- `R2_SECRET_ACCESS_KEY`: server-only R2 secret
-- `WORKSPACE_ENCRYPTION_KEY`: base64-encoded 32-byte scene encryption key
-- `GOOGLE_WORKSPACE_OAUTH_CLIENT_ID`: Google web OAuth client ID
-- `GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET`: server-only Google OAuth secret
-- `GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI`: exact backend OAuth callback URL
-- `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URI`: Notion public connection OAuth
-- `SLACK_OAUTH_CLIENT_ID`, `SLACK_OAUTH_CLIENT_SECRET`, `SLACK_OAUTH_REDIRECT_URI`: Slack app OAuth
-- `GITHUB_APP_ID`, `GITHUB_APP_SLUG`: public GitHub App identity
-- `GITHUB_APP_PRIVATE_KEY_BASE64`: server-only base64-encoded GitHub App private key
-- `GITHUB_APP_PRIVATE_KEY_PATH`: local or mounted secret-file alternative to the base64 value
-- `READ_AI_MCP_OAUTH_CLIENT_ID`, `READ_AI_MCP_OAUTH_REDIRECT_URI`: Read AI remote MCP public OAuth client
-- `FIREFLIES_MCP_OAUTH_CLIENT_ID`, `FIREFLIES_MCP_OAUTH_REDIRECT_URI`: Fireflies remote MCP public OAuth client
-- `AWS_CONNECTOR_PRINCIPAL_ARN`: stable IAM role ARN used by the Drawsy backend runtime
-- `AWS_CONNECTOR_TEMPLATE_URL`: optional supported Amazon S3 template URL
-- `AWS_CONNECTOR_TEMPLATE_S3_BUCKET`: optional private template bucket; configure exactly one template source
-- `AWS_CONNECTOR_TEMPLATE_S3_KEY`: template object key; default `connectors/aws/aws-connector-read-role.yaml`
-- `AWS_CONNECTOR_TEMPLATE_S3_REGION`: template bucket region; default `us-east-1`
-- `AWS_CONNECTOR_ROLE_NAME`: deterministic customer-account role name; default `DrawsyInfrastructureReadRole`
-- `AWS_CONNECTOR_SETUP_REGION`: region where the guided CloudFormation stack is created; default `us-east-1`
-- `CONNECTORS_OAUTH_SUCCESS_URL`: trusted frontend URL after OAuth completes
-- `CONNECTOR_ENCRYPTION_KEY`: optional dedicated base64-encoded 32-byte token key
-- `CONNECTOR_ENCRYPTION_KEY_VERSION`: positive current connector key version
-- `CONNECTOR_ENCRYPTION_PREVIOUS_KEYS`: comma-separated `version:base64-key` rotation entries
-- `CONNECTOR_OAUTH_STATE_TTL_SECONDS`: one-use connector OAuth state lifetime
-- `CONNECTOR_HTTP_TIMEOUT_MS`: connector provider request timeout
-- `CONNECTOR_AI_GRANT_TTL_SECONDS`: signed AI connector grant lifetime, 30–1800 seconds (default `600`); the local bridge still invalidates access as soon as the turn ends
-- `CONNECTOR_AI_MAX_OUTPUT_BYTES`: maximum provider response and normalized execution payload, 16 KiB–1 MiB (default `262144`)
-- `KANBAN_ENCRYPTION_KEY`: current base64-encoded 32-byte wrapping key; defaults to the workspace key for local compatibility
-- `KANBAN_ENCRYPTION_KEY_VERSION`: positive current key version
-- `KANBAN_ENCRYPTION_PREVIOUS_KEYS`: comma-separated `version:base64-key` entries required during rotation
-- `KANBAN_EMAIL_DIGEST_KEY`: stable base64-encoded 32-byte invitation-email HMAC key
-- `KANBAN_SSE_HEARTBEAT_MS`: keepalive interval; does not query Firestore
-- `KANBAN_EVENT_RETENTION_DAYS`: encrypted delta retention/TTL
-- `KANBAN_OPERATION_RETENTION_DAYS`: idempotency result retention/TTL
-- `KANBAN_INVITES_PER_HOUR`: durable per-owner/board invitation limit
-- `KANBAN_RECENT_AUTH_SECONDS`: maximum auth age for ownership transfer
+## Evaluation
 
-This repository does not contain Firebase client configuration, service-account
-keys, R2 credentials, or frontend code.
+The full methodology and released-data commands live in
+[`docs/HYDRA_EVALUATION.md`](https://github.com/adarshnagrikar14/drawsy-ai-backend/blob/feat-hyda-hack/docs/HYDRA_EVALUATION.md).
+
+### Product acceptance
+
+Run with the local OSS graph-node available:
+
+```bash
+npm run eval:hydra-memory
+```
+
+This gate checks cross-session synthesis, chronology, abstention, idempotent
+retry behavior, user isolation, and query latency. It is a disposable
+integration acceptance test, not a synthetic substitute for the official
+benchmarks.
+
+### Official memory evaluation
+
+Use the released datasets only:
+
+- [LongMemEval](https://github.com/xiaowu0162/LongMemEval)
+- [LongMemEval-V2](https://github.com/xiaowu0162/LongMemEval-V2)
+- [BEAM](https://github.com/mohammadtavakoli78/BEAM)
+
+The adapters stream into disposable owner-scoped collections, checkpoint
+progress, and report the metric appropriate to each release. LongMemEval can
+report exact evidence recall because its questions identify answer sessions.
+V2 and BEAM report retrieval latency and gold-answer token support unless a
+separate model reader is supplied; they are not silently presented as official
+end-to-end QA accuracy.
+
+### Real connector evaluation
+
+```bash
+npm run eval:hydra-connectors
+```
+
+This reads the current signed-in user’s persisted sync state and queries hosted
+Hydra through the production client. It never calls live providers during the
+test. Only sources that are `ready` with submitted/indexed records are counted;
+syncing, errored, rate-limited, or pending-indexing sources are reported and
+excluded. Re-run immediately before recording evidence because the result
+depends on live connector readiness.
+
+## Submission and OSS note
+
+Hack Hydra Track 03 asks for an original project built during Aug 12–20, 2026,
+meaningful use of the HydraDB OSS repository, an inspectable open-source
+repository, a short demo video, and the [official submission form](https://forms.gle/WEwqEmmN7Bkp4HyJ6).
+For this service, show:
+
+- the OSS graph writes and reads for signed-in memory;
+- the hosted Hydra v2 ingestion/query path for connector knowledge;
+- idempotent sync and readiness-gated connector status;
+- parallel memory/connector retrieval with graceful degradation; and
+- the user-facing source metadata emitted for Hydra context.
+
+The backend repository is currently access-controlled and has no license grant
+through private repository access. Before submitting it as a public repository,
+complete the security review, remove deployment-only material, publish an
+explicit OSI-approved license, and use the `feat-hyda-hack` branch URL.
+
+## Related implementation
+
+- [Drawsy frontend — `feat-hyda-hack`](https://github.com/adarshnagrikar14/drawsy-ai/tree/feat-hyda-hack)
+- [Drawsy MCP — `feat-hyda-hack`](https://github.com/adarshnagrikar14/drawsy-ai-mcp/tree/feat-hyda-hack)
+- [HydraDB OSS](https://github.com/hydra-db/hydradb)
+- [HydraDB AGENTS](https://docs.hydradb.com/AGENTS)
+- [HydraDB v2 introduction](https://docs.hydradb.com/get-started/v2/introduction)
+
+This service does not contain frontend code, Firebase client configuration,
+service-account keys, R2 credentials, or provider secrets.
