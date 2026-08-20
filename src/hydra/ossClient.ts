@@ -66,13 +66,15 @@ type ContextRecord = {
 };
 
 const MAX_BATCH_SIZE = 100;
-const MAX_QUERY_ROWS = 2_000;
+// The graph-node HTTP transport rejects oversized request bodies. A byte
+// budget keeps ordinary records batched while adapting automatically when a
+// connector or benchmark record contains a large free-form payload.
+const MAX_BATCH_BYTES = 1_000_000;
 const MAX_QUERY_PAGE_SIZE = 256;
 
 const sleep = (milliseconds: number) =>
   new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
-    timer.unref?.();
+    setTimeout(resolve, milliseconds);
   });
 
 const errorMessage = (error: unknown) =>
@@ -106,33 +108,97 @@ const cellValue = (row: GraphValue[] | undefined, index: number) =>
 const stringCell = (row: GraphValue[] | undefined, index: number) =>
   text(cellValue(row, index));
 
+const QUERY_STOP_WORDS = new Set([
+  "a",
+  "about",
+  "after",
+  "all",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "can",
+  "did",
+  "do",
+  "for",
+  "from",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "their",
+  "this",
+  "to",
+  "was",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "with",
+  "you",
+  "your",
+]);
+
+const tokens = (value: string) =>
+  value
+    .toLocaleLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
 const queryTerms = (value: string) =>
-  [...new Set(value.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u))].filter(
-    (term) => term.length >= 2,
+  [...new Set(tokens(value))].filter(
+    (term) => term.length >= 2 && !QUERY_STOP_WORDS.has(term),
   );
 
-const occurrences = (value: string, term: string) => {
-  let count = 0;
-  let offset = 0;
-  while (offset < value.length) {
-    const found = value.indexOf(term, offset);
-    if (found < 0) break;
-    count += 1;
-    offset = found + term.length;
+const tokenFrequency = (value: string) => {
+  const frequency = new Map<string, number>();
+  for (const token of tokens(value)) {
+    frequency.set(token, (frequency.get(token) || 0) + 1);
   }
-  return count;
+  return frequency;
 };
 
 const rowChunks = <T>(rows: T[], size: number) => {
   const chunks: T[][] = [];
+  let current: T[] = [];
+  let currentBytes = 2;
   for (let index = 0; index < rows.length; index += size) {
-    chunks.push(rows.slice(index, index + size));
+    for (const row of rows.slice(index, index + size)) {
+      const rowBytes =
+        new TextEncoder().encode(JSON.stringify(row)).byteLength + 1;
+      if (
+        current.length &&
+        (current.length >= size || currentBytes + rowBytes > MAX_BATCH_BYTES)
+      ) {
+        chunks.push(current);
+        current = [];
+        currentBytes = 2;
+      }
+      current.push(row);
+      currentBytes += rowBytes;
+    }
   }
+  if (current.length) chunks.push(current);
   return chunks;
 };
 
 export class HydraOssClient implements HydraMemoryClient {
   private ready: Promise<void> | null = null;
+  private readonly tokenFrequencyCache = new Map<string, Map<string, number>>();
+  private static readonly TOKEN_FREQUENCY_CACHE_LIMIT = 256;
 
   constructor(private readonly settings: HydraMemorySettings) {}
 
@@ -404,61 +470,52 @@ export class HydraOssClient implements HydraMemoryClient {
   async queryMemory(collection: string, input: HydraQueryInput) {
     await this.ensureReady();
     const userVertex = vertexId("user", collection, collection);
-    const records: ContextRecord[] = [];
-    let cursor: number | undefined;
-
-    do {
-      const response = await this.execute(
-        `MATCH (n:DrawsyContext)-[:BELONGS_TO]->(u:DrawsyUser {id: $user_vertex})
-         OPTIONAL MATCH (n)-[:FROM_SOURCE]->(connector:DrawsySource)
-         OPTIONAL MATCH (n)-[:REFERENCES_CONTEXT]->(canvas:DrawsySource)
-         RETURN n.record_id AS record_id,
-                n.kind AS kind,
-                n.title AS title,
-                n.text AS text,
-                n.url AS url,
-                n.timestamp AS timestamp,
-                n.metadata AS metadata,
-                n.updated_at AS updated_at,
-                collect(connector.source_id) AS connector_source_ids,
-                collect(canvas.source_id) AS canvas_source_ids
-         ORDER BY timestamp DESC, updated_at DESC`,
-        { user_vertex: userVertex },
-        { cursor, consistency: "strong", pageSize: MAX_QUERY_PAGE_SIZE },
-      );
-      records.push(
-        ...(response.rows || [])
-          .map((row) => ({
-            id: stringCell(row, 0),
-            kind: stringCell(row, 1),
-            title: stringCell(row, 2),
-            text: stringCell(row, 3),
-            url: stringCell(row, 4),
-            timestamp: stringCell(row, 5),
-            metadata: stringCell(row, 6),
-            updatedAt: stringCell(row, 7),
-            sourceIds: [cellValue(row, 8), cellValue(row, 9)]
-              .flatMap((value) => (Array.isArray(value) ? value : []))
-              .filter((value): value is string => typeof value === "string"),
-          }))
-          .filter((record) => record.id && record.text),
-      );
-      if (records.length >= MAX_QUERY_ROWS || response.next_cursor == null) {
-        break;
-      }
-      cursor = response.next_cursor;
-    } while (cursor !== undefined);
+    // The OSS graph API deliberately bounds each query page. Walking every
+    // memory row before ranking turns recall into an unbounded request as the
+    // user's history grows. Retrieve the newest bounded window, then rank it
+    // locally. The graph still owns user isolation and recency ordering; the
+    // application only performs the final lightweight text ranking.
+    const response = await this.execute(
+      `MATCH (n:DrawsyContext)-[:BELONGS_TO]->(u:DrawsyUser {id: $user_vertex})
+       RETURN n.record_id AS record_id,
+              n.kind AS kind,
+              n.title AS title,
+              n.text AS text,
+              n.url AS url,
+              n.timestamp AS timestamp,
+              n.metadata AS metadata,
+              n.updated_at AS updated_at
+       ORDER BY n.updated_at DESC
+       LIMIT ${MAX_QUERY_PAGE_SIZE}`,
+      { user_vertex: userVertex },
+      { consistency: "strong", pageSize: MAX_QUERY_PAGE_SIZE },
+    );
+    const records: ContextRecord[] = (response.rows || [])
+      .map((row) => ({
+        id: stringCell(row, 0),
+        kind: stringCell(row, 1),
+        title: stringCell(row, 2),
+        text: stringCell(row, 3),
+        url: stringCell(row, 4),
+        timestamp: stringCell(row, 5),
+        metadata: stringCell(row, 6),
+        updatedAt: stringCell(row, 7),
+        sourceIds: [],
+      }))
+      .filter((record) => record.id && record.text);
 
     const terms = queryTerms(
       [input.query, input.additionalContext || ""].filter(Boolean).join(" "),
     );
     const ranked = records
       .map((record) => {
-        const haystack = `${record.title}\n${record.text}`.toLocaleLowerCase();
-        const title = record.title.toLocaleLowerCase();
+        // Every Drawsy memory node has the same display title. Ranking that
+        // title would make a query containing "memory" match every record,
+        // weakening precision and abstention. Match the recorded turn body;
+        // the title remains presentation metadata only.
+        const frequency = this.getTokenFrequency(record);
         const score = terms.reduce(
-          (total, term) =>
-            total + occurrences(haystack, term) + occurrences(title, term) * 2,
+          (total, term) => total + (frequency.get(term) || 0),
           0,
         );
         return { record, score };
@@ -492,8 +549,8 @@ export class HydraOssClient implements HydraMemoryClient {
         .map(
           (record) =>
             `[${record.kind}] ${record.title}\n${record.text}${
-              record.url ? `\nSource: ${record.url}` : ""
-            }`,
+              record.timestamp ? `\nObserved at: ${record.timestamp}` : ""
+            }${record.url ? `\nSource: ${record.url}` : ""}`,
         )
         .join("\n\n"),
       chunks: selected,
@@ -527,6 +584,26 @@ export class HydraOssClient implements HydraMemoryClient {
     } satisfies HydraQueryResult;
   }
 
+  private getTokenFrequency(record: ContextRecord) {
+    const cacheKey = `${record.id}:${record.updatedAt}`;
+    const cached = this.tokenFrequencyCache.get(cacheKey);
+    if (cached) {
+      this.tokenFrequencyCache.delete(cacheKey);
+      this.tokenFrequencyCache.set(cacheKey, cached);
+      return cached;
+    }
+    const frequency = tokenFrequency(record.text);
+    if (
+      this.tokenFrequencyCache.size >=
+      HydraOssClient.TOKEN_FREQUENCY_CACHE_LIMIT
+    ) {
+      const oldest = this.tokenFrequencyCache.keys().next().value;
+      if (oldest) this.tokenFrequencyCache.delete(oldest);
+    }
+    this.tokenFrequencyCache.set(cacheKey, frequency);
+    return frequency;
+  }
+
   async deleteMemory(collection: string, ids?: string[]) {
     await this.ensureReady();
     const userVertex = vertexId("user", collection, collection);
@@ -550,6 +627,24 @@ export class HydraOssClient implements HydraMemoryClient {
              (u:DrawsyUser {id: $user_vertex})
        WHERE n.kind = "memory" OR n.kind = "memory_turn"
        DETACH DELETE n`,
+      { user_vertex: userVertex },
+    );
+    // Disposable evaluations and account-level memory deletion must not leave
+    // the graph filled with orphaned session, conversation, source, or user
+    // vertices. Every auxiliary vertex is owner-scoped, so this cleanup cannot
+    // touch another signed-in user's graph.
+    for (const label of [
+      "DrawsySession",
+      "DrawsyConversation",
+      "DrawsySource",
+    ]) {
+      await this.execute(
+        `MATCH (n:${label} {owner_id: $collection}) DETACH DELETE n`,
+        { collection },
+      );
+    }
+    await this.execute(
+      `MATCH (u:DrawsyUser {id: $user_vertex}) DETACH DELETE u`,
       { user_vertex: userVertex },
     );
   }
@@ -621,7 +716,6 @@ export class HydraOssClient implements HydraMemoryClient {
         () => controller.abort(),
         this.settings.timeoutSeconds * 1000,
       );
-      timeout.unref?.();
       try {
         const response = await fetch(url, {
           ...init,
@@ -640,7 +734,11 @@ export class HydraOssClient implements HydraMemoryClient {
           try {
             payload = JSON.parse(bodyText);
           } catch {
-            throw new Error("HydraDB OSS returned invalid JSON.");
+            const preview = bodyText.replace(/\s+/g, " ").slice(0, 512);
+            throw new HydraOssHttpError(
+              `HydraDB OSS returned invalid JSON (HTTP ${response.status}): ${preview}`,
+              response.status >= 500,
+            );
           }
         }
         if (!response.ok) {
