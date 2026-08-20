@@ -11,6 +11,9 @@ type ConnectorProbe = {
   providerId: string;
   capabilities: string[];
   query: string;
+  metadataFilters: {
+    additional_metadata: { providerId: string };
+  };
 };
 
 type ProbeResult = {
@@ -132,6 +135,7 @@ const probe = async (
     const result: HydraQueryResult = await client.queryKnowledge(userId, {
       query: input.query,
       maxResults: 10,
+      metadataFilters: input.metadataFilters,
     });
     const sourceValues = providerNamesIn({
       chunks: result.chunks,
@@ -212,6 +216,9 @@ const main = async () => {
       providerId,
       capabilities,
       query: queryFor(providerId, capabilities),
+      metadataFilters: {
+        additional_metadata: { providerId },
+      },
       state,
     };
   });
@@ -250,6 +257,30 @@ const main = async () => {
     });
 
   if (!probes.length) {
+    console.log(
+      JSON.stringify(
+        {
+          database: hostedSettings().database,
+          collection: "signed-in user (redacted)",
+          syncInProgress: userState.syncInProgress === true,
+          lastSyncAt:
+            typeof userState.lastSyncAt === "number"
+              ? userState.lastSyncAt
+              : null,
+          nextSyncAt:
+            typeof userState.nextSyncAt === "number"
+              ? userState.nextSyncAt
+              : null,
+          readyConnectorCount: 0,
+          excluded,
+          passed: 0,
+          total: 0,
+          results: [],
+        },
+        null,
+        2,
+      ),
+    );
     throw new Error(
       "No ready connector with indexed records is available for this signed-in user.",
     );
