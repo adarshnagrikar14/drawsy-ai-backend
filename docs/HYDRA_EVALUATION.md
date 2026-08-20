@@ -118,9 +118,8 @@ required before claiming official QA accuracy, and no such model is silently
 substituted here.
 
 The implementation is in
-[`scripts/hydra-official-eval.ts`](/Users/adarsh/Desktop/excal-ai/drawsy-ai-backend/scripts/hydra-official-eval.ts)
-and
-[`scripts/hydra-beam-export.py`](/Users/adarsh/Desktop/excal-ai/drawsy-ai-backend/scripts/hydra-beam-export.py).
+[`scripts/hydra-official-eval.ts`](../scripts/hydra-official-eval.ts) and
+[`scripts/hydra-beam-export.py`](../scripts/hydra-beam-export.py).
 
 The completed local runs on 2026-08-20 were:
 
@@ -158,14 +157,24 @@ npm run eval:hydra-connectors
 ```
 
 The result is a redacted provider-level report. A source that is still syncing,
-rate-limited, or errored is excluded rather than counted as a false pass. That
-keeps the result genuine: it measures what Hydra can retrieve now and leaves
-the connector's operational failure visible in the connectors UI.
+rate-limited, or errored is excluded rather than counted as a false pass. A
+source in Hydra's searchable `graph_creation` state is eligible; it does not
+need to wait for the optional fully-completed graph build. That keeps the result
+genuine: it measures what Hydra can retrieve now and leaves the connector's
+operational failure visible in the connectors UI.
 
-The final real-corpus run on 2026-08-20 passed 4/4 currently ready sources:
-Read AI, AWS, GitHub, and Notion. Google Workspace had all 3 capabilities and
-268 submitted records but one hosted indexing job was still pending; Fireflies
-was rate-limited with zero records. Neither was falsely counted as ready.
+Each provider probe also applies an exact `additional_metadata.providerId`
+filter. The user collection contains multiple connector families; scoping the
+probe before retrieval is what makes its provenance assertion meaningful rather
+than depending on whichever provider happens to occupy the top result slots.
+
+This evaluator is intentionally live-state based. Do not copy a previous
+provider count into a submission or README: rerun it immediately before
+recording evidence. It prints each eligible provider’s result and separately
+reports sources that are syncing, pending indexing, rate-limited, missing a
+resource, or otherwise errored. Those sources are excluded from the pass count
+but remain visible in the report, so the measurement cannot turn an operational
+connector failure into a false Hydra success.
 
 ## The useful canvas exercise
 

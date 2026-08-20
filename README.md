@@ -34,11 +34,11 @@ keeps connector access behind short-lived, capability-scoped grants.
 Hydra is an automatic signed-in context layer, not another OAuth connector and
 not a user-facing route the person has to remember.
 
-| Path | Data | Hydra integration | Failure behavior |
-| --- | --- | --- | --- |
-| Personal memory | Completed signed-in turns and canvas/chat references | Official HydraDB OSS graph-node over its documented graph HTTP API | Memory can be unavailable without blocking ordinary chat |
-| Connector knowledge | Normalized, syncable records from connected sources | Hosted HydraDB through `@hydradb/sdk` v2 | A source stays syncing/errored until its records are actually indexed |
-| Live connector | Fresh provider reads or actions | Existing provider/remote MCP adapter with a turn grant | Used only when naturally needed or explicitly requested |
+| Path                | Data                                                 | Hydra integration                                                  | Failure behavior                                                      |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Personal memory     | Completed signed-in turns and canvas/chat references | Official HydraDB OSS graph-node over its documented graph HTTP API | Memory can be unavailable without blocking ordinary chat              |
+| Connector knowledge | Normalized, syncable records from connected sources  | Hosted HydraDB through `@hydradb/sdk` v2                           | A source stays syncing/errored until its records are actually indexed |
+| Live connector      | Fresh provider reads or actions                      | Existing provider/remote MCP adapter with a turn grant             | Used only when naturally needed or explicitly requested               |
 
 The two Hydra stores are queried in parallel. The model receives returned source
 material as data, never as instructions. A missing or degraded connector does
@@ -96,8 +96,8 @@ The connector pipeline is deliberately stateful and readiness-gated:
 4. Records are upserted into the user’s hosted HydraDB collection using stable
    identities; retries do not multiply records.
 5. The backend reports progress per connector and capability in Firestore.
-6. Only a source with completed records and successful indexing is returned as
-   ready Hydra connector context.
+6. Only a source with completed records and a Hydra-searchable indexing state
+   (`graph_creation` or `completed`) is returned as ready connector context.
 
 Current adapters include Google Workspace (Mail, Calendar, Drive), Notion,
 GitHub, Read AI, Fireflies, AWS inventory, and Slack where configured. A
@@ -140,10 +140,11 @@ npm install
 npm run dev
 ```
 
-Start the official [HydraDB OSS repository](https://github.com/hydra-db/hydradb)
-according to its current [AGENTS guide](https://docs.hydradb.com/AGENTS) and
+Start the [Drawsy HydraDB fork](https://github.com/adarshnagrikar14/hydradb)
+as the local graph-node for this branch, following the current upstream
+[AGENTS guide](https://docs.hydradb.com/AGENTS) and
 [v2 introduction](https://docs.hydradb.com/get-started/v2/introduction). Keep
-the local graph endpoint on loopback. The backend’s local defaults are:
+the local graph endpoint on loopback. For the local hybrid path, set:
 
 ### Drawsy HydraDB fork
 
@@ -192,9 +193,11 @@ HYDRA_MEMORY_AUTH_TOKEN=
 ```
 
 `HYDRA_ENABLED` gates the Hydra router and sync worker. The older `HYDRA_DB_*`
-names are accepted only as migration aliases. `APP_ALLOWED_ORIGINS` must list
-the exact frontend origins used for local or hosted deployment; do not use a
-wildcard when credentials are enabled.
+names are accepted only as migration aliases. An environment containing only
+the old hosted aliases configures hosted connector knowledge, not the local OSS
+memory path; use the explicit `HYDRA_MEMORY_*` names above for a hybrid deploy.
+`APP_ALLOWED_ORIGINS` must list the exact frontend origins used for local or
+hosted deployment; do not use a wildcard when credentials are enabled.
 
 ## Commands
 
