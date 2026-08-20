@@ -167,6 +167,12 @@ path; this adapter is deliberately limited to local single-node development.
 The fork retains HydraDB’s AGPL-3.0 license and is deployed as a separate OSS
 graph service, not rebranded as Drawsy backend code.
 
+The connection is implemented in the backend’s `HydraOssClient` and composed by
+`HydraService`: memory writes/queries use the forked local graph-node, while
+`HydraDbClient` and `@hydradb/sdk` v2 handle hosted connector knowledge. The MCP
+bridge calls the backend routes; it does not bypass the backend or hold HydraDB
+credentials.
+
 ```dotenv
 HYDRA_ENABLED=true
 HYDRA_MEMORY_BASE_URL=http://127.0.0.1:18443
@@ -251,24 +257,6 @@ test. Only sources that are `ready` with submitted/indexed records are counted;
 syncing, errored, rate-limited, or pending-indexing sources are reported and
 excluded. Re-run immediately before recording evidence because the result
 depends on live connector readiness.
-
-## Submission and OSS note
-
-Hack Hydra Track 03 asks for an original project built during Aug 12–20, 2026,
-meaningful use of the HydraDB OSS repository, an inspectable open-source
-repository, a short demo video, and the [official submission form](https://forms.gle/WEwqEmmN7Bkp4HyJ6).
-For this service, show:
-
-- the OSS graph writes and reads for signed-in memory;
-- the hosted Hydra v2 ingestion/query path for connector knowledge;
-- idempotent sync and readiness-gated connector status;
-- parallel memory/connector retrieval with graceful degradation; and
-- the user-facing source metadata emitted for Hydra context.
-
-The backend repository is currently access-controlled and has no license grant
-through private repository access. Before submitting it as a public repository,
-complete the security review, remove deployment-only material, publish an
-explicit OSI-approved license, and use the `feat-hyda-hack` branch URL.
 
 ## Related implementation
 
