@@ -359,7 +359,14 @@ export class HydraService {
         (isRetryableIndexingTimeout(sync) && syncDue)
       );
     });
-    if (connectorKnowledgeAvailable && (syncDue || connectionChanged)) {
+    // A status poll is read-only while a sync lease is active. Re-entering
+    // syncUser here would still perform a Firestore transaction on every UI
+    // poll, creating needless reads/logs and competing with the current job.
+    if (
+      connectorKnowledgeAvailable &&
+      !user.syncInProgress &&
+      (syncDue || connectionChanged)
+    ) {
       void this.syncUser(userId, syncDue).catch((error) =>
         this.log("hydra_status_sync_failed", { userId, error }),
       );
@@ -439,6 +446,7 @@ export class HydraService {
     const user = await this.state.ensureUser(userId, Date.now());
     if (
       this.knowledgeClient &&
+      !user.syncInProgress &&
       (user.nextSyncAt === null || user.nextSyncAt <= Date.now())
     ) {
       void this.syncUser(userId).catch((error) =>
@@ -708,11 +716,15 @@ export class HydraService {
           .filter(([, state]) => Boolean(state?.pendingIndexingIds?.length))
           .map(([connectionId]) => connectionId),
       );
+      // A due run can be only an indexing-status poll. Keep the full-sync
+      // path for a clean scheduled run, but do not refetch every completed
+      // connector while another connector is still being indexed.
+      const fullSync = forceFullSync && pendingConnectionIds.size === 0;
       for (const connection of connections) {
         const sync = stateByConnection.get(connection.id);
         const hasPendingIndexing = pendingConnectionIds.has(connection.id);
         const shouldSync =
-          forceFullSync ||
+          fullSync ||
           hasPendingIndexing ||
           !sync ||
           sync.status === "waiting" ||

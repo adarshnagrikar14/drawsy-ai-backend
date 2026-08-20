@@ -169,6 +169,27 @@ describe("HydraService sync lifecycle", () => {
     expect(finish.nextSyncAt - finish.finishedAt).toBe(30_000);
   });
 
+  it("polls pending indexing without refetching the connector", async () => {
+    const state = createState(
+      readyState({ status: "syncing", pendingIndexingIds: ["source-1"] }),
+      { nextSyncAt: null },
+    );
+    const client = knowledgeClient([]);
+    const execute = vi.fn();
+    const service = new HydraService(settings, client, null, state.state, {
+      connectorService,
+      executeConnector: execute,
+    });
+
+    const result = await service.syncUser(userId);
+
+    expect(result.errors).toEqual([]);
+    expect(result.recordsSubmitted).toBe(0);
+    expect(execute).not.toHaveBeenCalled();
+    expect(client.checkIndexing).toHaveBeenCalledWith(userId, ["source-1"]);
+    expect(state.getConnectionState()?.status).toBe("ready");
+  });
+
   it("does not start a full sync on every status poll", async () => {
     const state = createState(readyState());
     const service = new HydraService(
@@ -182,6 +203,25 @@ describe("HydraService sync lifecycle", () => {
     const status = await service.status(userId);
 
     expect(status.connectorKnowledgeAvailable).toBe(true);
+    expect(state.state.tryStartSync).not.toHaveBeenCalled();
+  });
+
+  it("does not transact on status while a sync lease is active", async () => {
+    const state = createState(
+      readyState({ status: "syncing", completedCapabilities: 0 }),
+      { nextSyncAt: Date.now() - 1, syncInProgress: true },
+    );
+    const service = new HydraService(
+      settings,
+      knowledgeClient([]),
+      null,
+      state.state,
+      { connectorService, executeConnector },
+    );
+
+    const status = await service.status(userId);
+
+    expect(status.syncInProgress).toBe(true);
     expect(state.state.tryStartSync).not.toHaveBeenCalled();
   });
 
