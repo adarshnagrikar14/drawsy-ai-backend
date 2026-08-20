@@ -46,6 +46,7 @@ export type HydraQueryInput = {
   query: string;
   maxResults?: number;
   additionalContext?: string;
+  metadataFilters?: Record<string, unknown>;
 };
 
 export type HydraQueryResult = {

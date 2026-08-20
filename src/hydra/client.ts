@@ -41,6 +41,9 @@ const responseData = <T>(response: { data?: T }) => {
   return response.data;
 };
 
+export const hydraIndexingStatusIsSearchable = (status: unknown) =>
+  status === "graph_creation" || status === "completed";
+
 export class HydraDbClient implements HydraKnowledgeClient {
   private readonly client: HydraDBClient;
   private ready: Promise<void> | null = null;
@@ -97,7 +100,7 @@ export class HydraDbClient implements HydraKnowledgeClient {
     const statuses = responseData(response).statuses || [];
     for (const status of statuses) {
       if (!status.id) continue;
-      if (status.indexingStatus === "completed") {
+      if (hydraIndexingStatusIsSearchable(status.indexingStatus)) {
         pending.delete(status.id);
       } else if (
         status.indexingStatus === "failed" ||
@@ -111,9 +114,9 @@ export class HydraDbClient implements HydraKnowledgeClient {
         throw new Error(failure || `HydraDB failed to index ${status.id}.`);
       }
     }
-    // Hydra keeps sources in queued, processing, and graph_creation while
-    // indexing continues. They are not failures and must be checked again
-    // later instead of blocking connector synchronization.
+    // Hydra keeps sources in queued and processing while indexing continues.
+    // `graph_creation` is already searchable in the v2 contract, so do not
+    // hold a connector in syncing until the optional graph build finishes.
     return [...pending];
   }
 
@@ -127,6 +130,7 @@ export class HydraDbClient implements HydraKnowledgeClient {
       collection,
       query: input.query,
       additionalContext: input.additionalContext,
+      metadataFilters: input.metadataFilters,
       type: "knowledge",
       queryBy: "hybrid",
       mode: "fast",
